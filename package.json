@@ -12,7 +12,6 @@
         "prettier": "npx prettier '**/*.{ts,tsx,json,md}' --tab-width 4 --trailing-comma es5 --ignore-path .gitignore --arrow-parens always --write",
         "lint": "./node_modules/tslint/bin/tslint src/**/*.ts{,x}",
         "lint-fix": "./node_modules/tslint/bin/tslint src/**/*.ts{,x} --fix",
-        "api-knex": "TS_NODE_COMPILER_OPTIONS='{ \"module\": \"commonjs\" }' knex --knexfile=./src/knexfile.ts",
         "test": "jest",
         "prepublish": "yarn build"
     },
@@ -74,6 +73,7 @@
         "pbkdf2": "^3.1.1",
         "sqlite": "^4.0.17",
         "sqlite3": "^5.0.0",
+        "argon2": "^0.44.0",
         "@noble/curves": "^1.8.1",
         "uuid": "^8.3.1",
         "winston": "^3.3.3",

@@ -54,7 +54,7 @@ const checkAuth = (req: any, res: any, next: () => void) => {
         try {
             const result = jwt.verify(req.cookies.auth, process.env.SPK!);
 
-            // lol glad this is a try/catch block
+            // JWT verification failure — token expired or invalid
             (req as any).user = (result as any).user;
             (req as any).exp = (result as any).exp;
         } catch (err) {
@@ -68,7 +68,7 @@ const checkDevice = (req: any, res: any, next: () => void) => {
     if (req.cookies.device) {
         try {
             const result = jwt.verify(req.cookies.device, process.env.SPK!);
-            // lol glad this is a try/catch block
+            // JWT verification failure — token expired or invalid
             (req as any).device = (result as any).device;
         } catch (err) {
             console.warn(err.toString());
