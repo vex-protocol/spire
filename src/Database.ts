@@ -1,5 +1,6 @@
 import { xMakeNonce, XUtils } from "@vex-chat/crypto";
 import { XTypes } from "@vex-chat/types";
+import argon2 from "argon2";
 import { EventEmitter } from "events";
 import knex from "knex";
 import pbkdf2 from "pbkdf2";
@@ -10,6 +11,15 @@ import { createLogger } from "./utils/createLogger";
 
 const pubkeyRegex = /[0-9a-f]{64}/;
 export const ITERATIONS = 1000;
+
+/** Hash version 1 = legacy PBKDF2, 2 = argon2id */
+export const HASH_V1_PBKDF2 = 1;
+export const HASH_V2_ARGON2 = 2;
+
+/** Extends IUser with the hashVersion column added for argon2id migration */
+export interface IUserRow extends XTypes.SQL.IUser {
+    hashVersion: number;
+}
 
 export class Database extends EventEmitter {
     private db: knex<any, unknown[]>;
@@ -579,17 +589,20 @@ export class Database extends EventEmitter {
     public async createUser(
         regKey: Uint8Array,
         regPayload: XTypes.HTTP.IRegistrationPayload
-    ): Promise<[XTypes.SQL.IUser | null, Error | null]> {
+    ): Promise<[IUserRow | null, Error | null]> {
         try {
-            const salt = xMakeNonce();
-            const passwordHash = hashPassword(regPayload.password, salt);
+            // New registrations use argon2id — salt is embedded in the hash
+            const passwordHash = await argon2.hash(regPayload.password, {
+                type: argon2.argon2id,
+            });
 
-            const user: XTypes.SQL.IUser = {
+            const user: IUserRow = {
                 userID: uuid.stringify(regKey),
                 username: regPayload.username,
                 lastSeen: new Date(Date.now()),
-                passwordHash: passwordHash.toString("hex"),
-                passwordSalt: XUtils.encodeHex(salt),
+                passwordHash,
+                passwordSalt: "",
+                hashVersion: HASH_V2_ARGON2,
             };
 
             await this.db("users").insert(user);
@@ -621,8 +634,8 @@ export class Database extends EventEmitter {
     // the identifier can be username, public key, or userID
     public async retrieveUser(
         userIdentifier: string
-    ): Promise<XTypes.SQL.IUser | null> {
-        let rows: XTypes.SQL.IUser[] = [];
+    ): Promise<IUserRow | null> {
+        let rows: IUserRow[] = [];
         if (uuid.validate(userIdentifier)) {
             rows = await this.db
                 .from("users")
@@ -641,6 +654,10 @@ export class Database extends EventEmitter {
             return null;
         }
         const [user] = rows;
+        // Default for rows created before migration
+        if (user.hashVersion === undefined) {
+            user.hashVersion = HASH_V1_PBKDF2;
+        }
         return user;
     }
 
@@ -711,6 +728,17 @@ export class Database extends EventEmitter {
             .where({ nonce: XUtils.encodeHex(nonce), recipient: userID });
     }
 
+    public async updateUserHash(
+        userID: string,
+        newHash: string
+    ): Promise<void> {
+        await this.db("users").where({ userID }).update({
+            passwordHash: newHash,
+            passwordSalt: "",
+            hashVersion: HASH_V2_ARGON2,
+        });
+    }
+
     public async markUserSeen(user: XTypes.SQL.IUser): Promise<void> {
         await this.db("users")
             .where({ userID: user.userID })
@@ -749,6 +777,20 @@ export class Database extends EventEmitter {
                 table.string("passwordHash");
                 table.string("passwordSalt");
                 table.dateTime("lastSeen");
+                table
+                    .integer("hashVersion")
+                    .notNullable()
+                    .defaultTo(HASH_V1_PBKDF2);
+            });
+        } else if (
+            !(await this.db.schema.hasColumn("users", "hashVersion"))
+        ) {
+            // Migrate existing users table — add hashVersion defaulting to PBKDF2
+            await this.db.schema.alterTable("users", (table) => {
+                table
+                    .integer("hashVersion")
+                    .notNullable()
+                    .defaultTo(HASH_V1_PBKDF2);
             });
         }
         if (!(await this.db.schema.hasTable("devices"))) {
@@ -847,3 +889,34 @@ export class Database extends EventEmitter {
 
 export const hashPassword = (password: string, salt: Uint8Array) =>
     pbkdf2.pbkdf2Sync(password, salt, ITERATIONS, 32, "sha512");
+
+/**
+ * Verifies a password against a stored hash, handling both PBKDF2 (v1) and argon2id (v2).
+ * Returns true if the password matches.
+ */
+export async function verifyPassword(
+    password: string,
+    user: IUserRow
+): Promise<boolean> {
+    if (user.hashVersion === HASH_V2_ARGON2) {
+        return argon2.verify(user.passwordHash, password);
+    }
+    // Legacy PBKDF2 verification
+    const salt = XUtils.decodeHex(user.passwordSalt);
+    const payloadHash = XUtils.encodeHex(hashPassword(password, salt));
+    return payloadHash === user.passwordHash;
+}
+
+/**
+ * Re-hashes a user's password with argon2id and updates the DB row.
+ * Called on successful login for users still on PBKDF2.
+ */
+export async function upgradeHashIfNeeded(
+    database: Database,
+    user: IUserRow,
+    password: string
+): Promise<void> {
+    if (user.hashVersion >= HASH_V2_ARGON2) return;
+    const newHash = await argon2.hash(password, { type: argon2.argon2id });
+    await database.updateUserHash(user.userID, newHash);
+}

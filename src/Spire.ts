@@ -16,7 +16,11 @@ import WebSocket from "ws";
 import jwt from "jsonwebtoken";
 import msgpack from "msgpack-lite";
 import { ClientManager } from "./ClientManager";
-import { Database, hashPassword } from "./Database";
+import {
+    Database,
+    verifyPassword,
+    upgradeHashIfNeeded,
+} from "./Database";
 import { initApp, protect } from "./server";
 import { censorUser, ICensoredUser } from "./server/utils";
 import { createLogger } from "./utils/createLogger";
@@ -408,15 +412,21 @@ export class Spire extends EventEmitter {
                     return;
                 }
 
-                const salt = XUtils.decodeHex(userEntry.passwordSalt);
-                const payloadHash = XUtils.encodeHex(
-                    hashPassword(credentials.password, salt)
+                const valid = await verifyPassword(
+                    credentials.password,
+                    userEntry
                 );
-
-                if (payloadHash !== userEntry.passwordHash) {
+                if (!valid) {
                     res.sendStatus(401);
                     return;
                 }
+
+                // Lazy-migrate PBKDF2 hashes to argon2id on successful login
+                await upgradeHashIfNeeded(
+                    this.db,
+                    userEntry,
+                    credentials.password
+                );
 
                 const token = jwt.sign(
                     { user: censorUser(userEntry) },
