@@ -49,11 +49,17 @@ interface IInvitePayload {
 }
 
 const checkAuth = (req: any, res: any, next: () => void) => {
-    if (req.cookies.auth) {
+    // Accept JWT from cookie or Authorization: Bearer header
+    let token = req.cookies.auth;
+    if (!token) {
+        const header = req.headers.authorization;
+        if (header && header.startsWith("Bearer ")) {
+            token = header.slice(7);
+        }
+    }
+    if (token) {
         try {
-            const result = jwt.verify(req.cookies.auth, process.env.SPK!);
-
-            // JWT verification failure — token expired or invalid
+            const result = jwt.verify(token, process.env.SPK!);
             (req as any).user = (result as any).user;
             (req as any).exp = (result as any).exp;
         } catch (err) {
