@@ -78,10 +78,18 @@ describe("Database", () => {
     // });
 
     describe("getPreKeys", () => {
-        it("returns a preKey by deviceID if said preKey exists.", async () => {
-            const provider = new Database(options);
-            await new Promise<void>((resolve) => provider.on("ready", resolve));
+        let provider: Database;
 
+        beforeEach(async () => {
+            provider = new Database(options);
+            await new Promise<void>((resolve) => provider.on("ready", resolve));
+        });
+
+        afterEach(async () => {
+            await provider.close();
+        });
+
+        it("returns a preKey by deviceID if said preKey exists.", async () => {
             await provider["db"]("preKeys").insert(testSQLPreKey);
             const result = await provider.getPreKeys(deviceID);
 
@@ -89,9 +97,6 @@ describe("Database", () => {
         });
 
         it("return null if there are no preKeys with deviceID param", async () => {
-            const provider = new Database(options);
-            await new Promise<void>((resolve) => provider.on("ready", resolve));
-
             const result = await provider.getPreKeys(deviceID);
 
             expect(result).toBeNull();
