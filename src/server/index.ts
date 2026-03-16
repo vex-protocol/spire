@@ -19,8 +19,7 @@ import FileType from "file-type";
 import jwt from "jsonwebtoken";
 import msgpack from "msgpack-lite";
 import multer from "multer";
-import { signOpen } from "../utils/naclCompat";
-import type { SignKeyPair } from "../utils/naclCompat";
+import { ISignKeyPair, signOpen } from "../utils/naclCompat";
 import { getAvatarRouter } from "./avatar";
 import { getFileRouter } from "./file";
 import { getInviteRouter } from "./invite";
@@ -110,7 +109,7 @@ export const initApp = (
     db: Database,
     log: winston.Logger,
     tokenValidator: (key: string, scope: XTypes.HTTP.TokenScopes) => boolean,
-    signKeys: SignKeyPair,
+    signKeys: ISignKeyPair,
     notify: (
         userID: string,
         event: string,

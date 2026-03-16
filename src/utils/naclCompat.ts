@@ -2,9 +2,10 @@
  * NaCl-compatible Ed25519 operations using @noble/curves.
  * Drop-in replacements for the tweetnacl functions used in spire.
  */
+// tslint:disable-next-line:no-submodule-imports
 import { ed25519 } from "@noble/curves/ed25519";
 
-export interface SignKeyPair {
+export interface ISignKeyPair {
     publicKey: Uint8Array;
     secretKey: Uint8Array;
 }
@@ -14,7 +15,7 @@ export interface SignKeyPair {
  * (first 32 bytes = seed, last 32 bytes = public key).
  * Equivalent to `nacl.sign.keyPair.fromSecretKey(sk)`.
  */
-export function keyPairFromSecretKey(sk: Uint8Array): SignKeyPair {
+export function keyPairFromSecretKey(sk: Uint8Array): ISignKeyPair {
     const seed = sk.subarray(0, 32);
     const publicKey = ed25519.getPublicKey(seed);
     return { publicKey, secretKey: sk };
@@ -29,7 +30,9 @@ export function signOpen(
     signedMessage: Uint8Array,
     publicKey: Uint8Array
 ): Uint8Array | null {
-    if (signedMessage.length < 64) return null;
+    if (signedMessage.length < 64) {
+        return null;
+    }
     const signature = signedMessage.subarray(0, 64);
     const message = signedMessage.subarray(64);
     try {

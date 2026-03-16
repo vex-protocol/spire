@@ -4,7 +4,6 @@ import { XTypes } from "@vex-chat/types";
 import chalk from "chalk";
 import { EventEmitter } from "events";
 import msgpack from "msgpack-lite";
-import { signOpen } from "./utils/naclCompat";
 import {
     parse as uuidParse,
     v4 as uuidv4,
@@ -18,6 +17,7 @@ import { ICensoredUser } from "./server/utils";
 import { ISpireOptions, TOKEN_EXPIRY } from "./Spire";
 import { createLogger } from "./utils/createLogger";
 import { createUint8UUID } from "./utils/createUint8UUID";
+import { signOpen } from "./utils/naclCompat";
 
 export const POWER_LEVELS = {
     INVITE: 25,

@@ -7,16 +7,19 @@ import { EventEmitter } from "events";
 import express from "express";
 import expressWs from "express-ws";
 
-import { keyPairFromSecretKey, signOpen } from "./utils/naclCompat";
-import type { SignKeyPair } from "./utils/naclCompat";
+import {
+    ISignKeyPair,
+    keyPairFromSecretKey,
+    signOpen,
+} from "./utils/naclCompat";
 import * as uuid from "uuid";
-import winston from "winston";
 import WebSocket from "ws";
+import winston from "winston";
 
 import jwt from "jsonwebtoken";
 import msgpack from "msgpack-lite";
 import { ClientManager } from "./ClientManager";
-import { Database, verifyPassword, upgradeHashIfNeeded } from "./Database";
+import { Database, upgradeHashIfNeeded, verifyPassword } from "./Database";
 import { initApp, protect } from "./server";
 import { censorUser, ICensoredUser } from "./server/utils";
 import { createLogger } from "./utils/createLogger";
@@ -58,7 +61,7 @@ export class Spire extends EventEmitter {
     private api = this.expWs.app;
     private wss: WebSocket.Server = this.expWs.getWss();
 
-    private signKeys: SignKeyPair;
+    private signKeys: ISignKeyPair;
 
     private actionTokens: XTypes.HTTP.IActionToken[] = [];
 

@@ -1,13 +1,13 @@
 import { XUtils } from "@vex-chat/crypto";
 import { XTypes } from "@vex-chat/types";
 import express from "express";
-import { signOpen } from "../utils/naclCompat";
+import msgpack from "msgpack-lite";
 import { stringify } from "uuid";
 import winston from "winston";
-import { protect } from ".";
 
-import msgpack from "msgpack-lite";
+import { protect } from ".";
 import { Database } from "../Database";
+import { signOpen } from "../utils/naclCompat";
 import { censorUser, ICensoredUser } from "./utils";
 
 const TokenScopes = XTypes.HTTP.TokenScopes;

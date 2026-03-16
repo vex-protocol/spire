@@ -901,7 +901,9 @@ export async function upgradeHashIfNeeded(
     user: IUserRow,
     password: string
 ): Promise<void> {
-    if (user.hashVersion >= HASH_V2_ARGON2) return;
+    if (user.hashVersion >= HASH_V2_ARGON2) {
+        return;
+    }
     const newHash = await argon2.hash(password, { type: argon2.argon2id });
     await database.updateUserHash(user.userID, newHash);
 }
