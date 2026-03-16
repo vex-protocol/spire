@@ -7,22 +7,22 @@ import { EventEmitter } from "events";
 import express from "express";
 import expressWs from "express-ws";
 
-import {
-    ISignKeyPair,
-    keyPairFromSecretKey,
-    signOpen,
-} from "./utils/naclCompat";
-import * as uuid from "uuid";
-import WebSocket from "ws";
-import winston from "winston";
-
 import jwt from "jsonwebtoken";
 import msgpack from "msgpack-lite";
+import * as uuid from "uuid";
+import winston from "winston";
+import WebSocket from "ws";
+
 import { ClientManager } from "./ClientManager";
 import { Database, upgradeHashIfNeeded, verifyPassword } from "./Database";
 import { initApp, protect } from "./server";
 import { censorUser, ICensoredUser } from "./server/utils";
 import { createLogger } from "./utils/createLogger";
+import {
+    ISignKeyPair,
+    keyPairFromSecretKey,
+    signOpen,
+} from "./utils/naclCompat";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
