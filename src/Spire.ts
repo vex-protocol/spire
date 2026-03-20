@@ -328,14 +328,12 @@ export class Spire extends EventEmitter {
                         this.deleteActionToken(token);
                     }, TOKEN_EXPIRY);
 
-                    return res
-                        .type("application/octet-stream")
-                        .send(
-                            msgpackEncode({
-                                ...token,
-                                time: token.time.toISOString(),
-                            })
-                        );
+                    return res.type("application/octet-stream").send(
+                        msgpackEncode({
+                            ...token,
+                            time: token.time.toISOString(),
+                        })
+                    );
                 } catch (err) {
                     console.error(err.toString());
                     return res.sendStatus(500);

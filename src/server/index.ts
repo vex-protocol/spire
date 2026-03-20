@@ -77,10 +77,15 @@ const checkAuth = (req: any, res: any, next: () => void) => {
 };
 
 const checkDevice = (req: any, res: any, next: () => void) => {
-    if (req.cookies.device) {
+    // Accept device JWT from cookie or X-Device-Token header
+    let token = req.cookies.device;
+    if (!token) {
+        const header = req.headers["x-device-token"];
+        if (header) token = header;
+    }
+    if (token) {
         try {
-            const result = jwt.verify(req.cookies.device, process.env.SPK!);
-            // JWT verification failure — token expired or invalid
+            const result = jwt.verify(token, process.env.SPK!);
             (req as any).device = (result as any).device;
         } catch (err) {
             console.warn(err.toString());
@@ -541,7 +546,8 @@ export const initApp = (
                 sameSite: "none",
                 secure: true,
             });
-            res.sendStatus(200);
+            // Also return token in body so stateless clients can store it
+            res.send(msgpackEncode({ token }));
         } else {
             res.sendStatus(401);
         }
