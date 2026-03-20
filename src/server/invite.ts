@@ -60,6 +60,19 @@ export const getInviteRouter = (
         );
         res.send(msgpackEncode(permission));
         notify(userDetails.userID, "permission", uuid.v4(), permission);
+
+        // Notify all existing server members that someone joined
+        const affectedUsers = await db.retrieveAffectedUsers(invite.serverID);
+        for (const user of affectedUsers) {
+            if (user.userID === userDetails.userID) continue; // don't notify the joiner
+            notify(user.userID, "serverChange", uuid.v4(), {
+                serverID: invite.serverID,
+                joined: {
+                    userID: userDetails.userID,
+                    username: userDetails.username,
+                },
+            });
+        }
     });
 
     router.get("/:inviteID", async (req, res) => {
