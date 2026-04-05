@@ -15,7 +15,6 @@
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc",
         "prettier": "prettier '**/*.{ts,tsx,json,md}' --tab-width 4 --trailing-comma es5 --ignore-path .gitignore --arrow-parens always --write",
-        "api-knex": "TS_NODE_COMPILER_OPTIONS='{ \"module\": \"commonjs\" }' knex --knexfile=./src/knexfile.ts",
         "test": "vitest run",
         "gen-spk": "node scripts/gen-spk.js"
     },
