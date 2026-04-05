@@ -959,10 +959,10 @@
   dependencies:
     "@types/yargs-parser" "*"
 
-"@vex-chat/crypto@1.0.10-rc.8":
-  version "1.0.10-rc.8"
-  resolved "https://registry.yarnpkg.com/@vex-chat/crypto/-/crypto-1.0.10-rc.8.tgz#e64d8e76b1f3e79d2d28bce1e017e1c4a61eee1b"
-  integrity sha512-BAXI3gXs16BWKCWbJnD9OxjjbdNFv6uMY9KeMdfx0Miolti6NKQpkBpEhGtuZ5+TzBappiz1v4Uavk37Ge9Ttw==
+"@vex-chat/crypto@1.0.11-rc.11":
+  version "1.0.11-rc.11"
+  resolved "https://registry.yarnpkg.com/@vex-chat/crypto/-/crypto-1.0.11-rc.11.tgz#0926256953a5935e737bc0214931772a2a8bfa03"
+  integrity sha512-S6GRmI8vR3E7yqDJGzEhMtW2x9Ue2lQ05Hv1vWn3dgbFsHL8B867AEkB2XLxv4exfy7vhguNm47L6nFWQjbyXg==
   dependencies:
     "@stablelib/base64" "^1.0.1"
     "@stablelib/utf8" "^1.0.1"

@@ -58,7 +58,7 @@
     },
     "dependencies": {
         "@extrahash/sleep": "^1.0.0",
-        "@vex-chat/crypto": "1.0.10-rc.8",
+        "@vex-chat/crypto": "1.0.11-rc.11",
         "@vex-chat/types": "^0.10.18",
         "atob": "^2.1.2",
         "chalk": "^4.1.0",
