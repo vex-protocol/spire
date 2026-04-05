@@ -9,9 +9,9 @@ import nacl from "tweetnacl";
 import { v4 } from "uuid";
 import winston from "winston";
 
-import { msgpack } from "../utils/msgpack.js";
-import { protect } from "./index.js";
-import { Database } from "../Database.js";
+import { msgpack } from "../utils/msgpack.ts";
+import { protect } from "./index.ts";
+import { Database } from "../Database.ts";
 
 export const getFileRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();

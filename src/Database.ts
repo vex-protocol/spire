@@ -5,8 +5,8 @@ import { pbkdf2Sync } from "node:crypto";
 import knex, { type Knex } from "knex";
 import * as uuid from "uuid";
 import winston from "winston";
-import type { ISpireOptions } from "./Spire.js";
-import { createLogger } from "./utils/createLogger.js";
+import type { ISpireOptions } from "./Spire.ts";
+import { createLogger } from "./utils/createLogger.ts";
 
 const pubkeyRegex = /[0-9a-f]{64}/;
 export const ITERATIONS = 1000;

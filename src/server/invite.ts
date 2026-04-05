@@ -5,7 +5,7 @@ import { XUtils } from "@vex-chat/crypto";
 import { TokenScopes } from "@vex-chat/types";
 import express from "express";
 import FileType from "file-type";
-import { msgpack } from "../utils/msgpack.js";
+import { msgpack } from "../utils/msgpack.ts";
 import multer from "multer";
 import nacl from "tweetnacl";
 import * as uuid from "uuid";
@@ -13,11 +13,11 @@ import winston from "winston";
 
 import parseDuration from "parse-duration";
 
-import { POWER_LEVELS } from "../ClientManager.js";
-import { Database } from "../Database.js";
+import { POWER_LEVELS } from "../ClientManager.ts";
+import { Database } from "../Database.ts";
 
-import { protect } from "./index.js";
-import type { ICensoredUser } from "./utils.js";
+import { protect } from "./index.ts";
+import type { ICensoredUser } from "./utils.ts";
 
 export const getInviteRouter = (
     db: Database,

@@ -4,7 +4,7 @@ import type { IBaseMsg, IChallMsg, IDevice, IErrMsg, IMailWS, IReceiptMsg, IReso
 import { SocketAuthErrors } from "@vex-chat/types";
 import chalk from "chalk";
 import { EventEmitter } from "events";
-import { msgpack } from "./utils/msgpack.js";
+import { msgpack } from "./utils/msgpack.ts";
 import nacl from "tweetnacl";
 import {
     parse as uuidParse,
@@ -14,11 +14,11 @@ import {
 import winston from "winston";
 import WebSocket from "ws";
 
-import { Database } from "./Database.js";
-import type { ICensoredUser } from "./server/utils.js";
-import { TOKEN_EXPIRY, type ISpireOptions } from "./Spire.js";
-import { createLogger } from "./utils/createLogger.js";
-import { createUint8UUID } from "./utils/createUint8UUID.js";
+import { Database } from "./Database.ts";
+import type { ICensoredUser } from "./server/utils.ts";
+import { TOKEN_EXPIRY, type ISpireOptions } from "./Spire.ts";
+import { createLogger } from "./utils/createLogger.ts";
+import { createUint8UUID } from "./utils/createUint8UUID.ts";
 
 export const POWER_LEVELS = {
     INVITE: 25,

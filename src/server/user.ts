@@ -5,11 +5,11 @@ import express from "express";
 import nacl from "tweetnacl";
 import { stringify } from "uuid";
 import winston from "winston";
-import { protect } from "./index.js";
+import { protect } from "./index.ts";
 
-import { msgpack } from "../utils/msgpack.js";
-import { Database } from "../Database.js";
-import { censorUser, type ICensoredUser } from "./utils.js";
+import { msgpack } from "../utils/msgpack.ts";
+import { Database } from "../Database.ts";
+import { censorUser, type ICensoredUser } from "./utils.ts";
 
 
 export const getUserRouter = (

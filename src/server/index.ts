@@ -12,23 +12,23 @@ import morgan from "morgan";
 import parseDuration from "parse-duration";
 import winston from "winston";
 
-import { Database } from "../Database.js";
+import { Database } from "../Database.ts";
 
 import { XUtils } from "@vex-chat/crypto";
 import FileType from "file-type";
 import jwt from "jsonwebtoken";
-import { msgpack } from "../utils/msgpack.js";
+import { msgpack } from "../utils/msgpack.ts";
 import multer from "multer";
 import nacl from "tweetnacl";
-import { getAvatarRouter } from "./avatar.js";
-import { getFileRouter } from "./file.js";
-import { getInviteRouter } from "./invite.js";
-import { getUserRouter } from "./user.js";
+import { getAvatarRouter } from "./avatar.ts";
+import { getFileRouter } from "./file.ts";
+import { getInviteRouter } from "./invite.ts";
+import { getUserRouter } from "./user.ts";
 
 import * as uuid from "uuid";
-import { POWER_LEVELS } from "../ClientManager.js";
-import { JWT_EXPIRY } from "../Spire.js";
-import { censorUser, type ICensoredUser } from "./utils.js";
+import { POWER_LEVELS } from "../ClientManager.ts";
+import { JWT_EXPIRY } from "../Spire.ts";
+import { censorUser, type ICensoredUser } from "./utils.ts";
 
 // expiry of regkeys
 export const EXPIRY_TIME = 1000 * 60 * 5;

@@ -6,8 +6,8 @@ import type { IPreKeysSQL, IPreKeysWS } from "@vex-chat/types";
 import * as uuid from "uuid";
 import winston from "winston";
 
-import { Database } from "../Database.js";
-import type { ISpireOptions } from "../Spire.js";
+import { Database } from "../Database.ts";
+import type { ISpireOptions } from "../Spire.ts";
 
 // vi.mock is hoisted above all imports automatically.
 // Minimal stubs for uuid functions used by spire src: v4, parse, stringify.

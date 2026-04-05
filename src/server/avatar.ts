@@ -8,9 +8,9 @@ import multer from "multer";
 import nacl from "tweetnacl";
 import winston from "winston";
 
-import { ALLOWED_IMAGE_TYPES, protect } from "./index.js";
-import { Database } from "../Database.js";
-import type { ICensoredUser } from "./utils.js";
+import { ALLOWED_IMAGE_TYPES, protect } from "./index.ts";
+import { Database } from "../Database.ts";
+import type { ICensoredUser } from "./utils.ts";
 
 export const getAvatarRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();

@@ -14,12 +14,12 @@ import winston from "winston";
 import WebSocket, { WebSocketServer } from "ws";
 
 import jwt from "jsonwebtoken";
-import { msgpack } from "./utils/msgpack.js";
-import { ClientManager } from "./ClientManager.js";
-import { Database, hashPassword } from "./Database.js";
-import { initApp, protect } from "./server/index.js";
-import { censorUser, type ICensoredUser } from "./server/utils.js";
-import { createLogger } from "./utils/createLogger.js";
+import { msgpack } from "./utils/msgpack.ts";
+import { ClientManager } from "./ClientManager.ts";
+import { Database, hashPassword } from "./Database.ts";
+import { initApp, protect } from "./server/index.ts";
+import { censorUser, type ICensoredUser } from "./server/utils.ts";
+import { createLogger } from "./utils/createLogger.ts";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;

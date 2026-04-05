@@ -1,5 +1,5 @@
-import { Spire } from "./Spire.js";
-import { loadEnv } from "./utils/loadEnv.js";
+import { Spire } from "./Spire.ts";
+import { loadEnv } from "./utils/loadEnv.ts";
 
 async function main() {
     // load the environment variables

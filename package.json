@@ -10,7 +10,8 @@
         "node": ">=24.0.0"
     },
     "scripts": {
-        "start": "node ./dist/run.js",
+        "start": "node src/run.ts",
+        "start:built": "node ./dist/run.js",
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc",
         "prettier": "prettier '**/*.{ts,tsx,json,md}' --tab-width 4 --trailing-comma es5 --ignore-path .gitignore --arrow-parens always --write",
