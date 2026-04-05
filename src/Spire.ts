@@ -11,7 +11,7 @@ import expressWs from "express-ws";
 import nacl from "tweetnacl";
 import * as uuid from "uuid";
 import winston from "winston";
-import WebSocket, { WebSocketServer } from "ws";
+import { WebSocketServer } from "ws";
 
 import jwt from "jsonwebtoken";
 import { msgpack } from "./utils/msgpack.ts";
