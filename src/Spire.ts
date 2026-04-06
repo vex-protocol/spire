@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import { Server } from "http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { XUtils } from "@vex-chat/crypto";
 import type {
@@ -60,20 +62,12 @@ const getAppVersion = (): string => {
 };
 
 const getCommitSha = (): string => {
-    const envSha =
-        process.env.VERCEL_GIT_COMMIT_SHA ||
-        process.env.GIT_SHA ||
-        process.env.COMMIT_SHA ||
-        process.env.SOURCE_VERSION ||
-        process.env.RENDER_GIT_COMMIT;
-
-    if (envSha && envSha.trim() !== "") {
-        return envSha.trim();
-    }
+    const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+    const repoRoot = path.resolve(sourceDir, "..");
 
     try {
-        const sha = execSync("git rev-parse --short HEAD", {
-            cwd: process.cwd(),
+        const sha = execSync("git rev-parse --verify --short=12 HEAD", {
+            cwd: repoRoot,
             stdio: ["ignore", "pipe", "ignore"],
             encoding: "utf8",
             timeout: 1500,
