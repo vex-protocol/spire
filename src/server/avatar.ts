@@ -35,8 +35,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
     router.post("/:userID/json", protect, async (req, res) => {
         const payload: IFilePayload = req.body;
         const userDetails: ICensoredUser = (req as any).user;
-        const deviceDetails: IDevice | undefined = (req as any)
-            .device;
+        const deviceDetails: IDevice | undefined = (req as any).device;
 
         if (!deviceDetails) {
             res.sendStatus(401);
@@ -78,8 +77,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
         multer().single("avatar"),
         async (req, res) => {
             const userDetails: ICensoredUser = (req as any).user;
-            const deviceDetails: IDevice | undefined = (req as any)
-                .device;
+            const deviceDetails: IDevice | undefined = (req as any).device;
 
             if (!deviceDetails) {
                 res.sendStatus(401);
@@ -109,14 +107,14 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
                     req.file.buffer,
                     () => {
                         log.info("Wrote new avatar " + userDetails.userID);
-                    }
+                    },
                 );
                 res.sendStatus(200);
             } catch (err) {
                 log.warn(err);
                 res.sendStatus(500);
             }
-        }
+        },
     );
 
     return router;

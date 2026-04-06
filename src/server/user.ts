@@ -11,11 +11,10 @@ import { msgpack } from "../utils/msgpack.ts";
 import { Database } from "../Database.ts";
 import { censorUser, type ICensoredUser } from "./utils.ts";
 
-
 export const getUserRouter = (
     db: Database,
     log: winston.Logger,
-    tokenValidator: (key: string, scope: TokenScopes) => boolean
+    tokenValidator: (key: string, scope: TokenScopes) => boolean,
 ) => {
     const router = express.Router();
 
@@ -39,7 +38,7 @@ export const getUserRouter = (
         try {
             const permissions = await db.retrievePermissions(
                 userDetails.userID,
-                "all"
+                "all",
             );
             res.send(msgpack.encode(permissions));
         } catch (err) {
@@ -85,7 +84,7 @@ export const getUserRouter = (
 
         const token = nacl.sign.open(
             XUtils.decodeHex(devicePayload.signed),
-            XUtils.decodeHex(devicePayload.signKey)
+            XUtils.decodeHex(devicePayload.signKey),
         );
 
         if (!token) {
@@ -98,7 +97,7 @@ export const getUserRouter = (
             try {
                 const device = await db.createDevice(
                     userDetails.userID,
-                    devicePayload
+                    devicePayload,
                 );
                 res.send(msgpack.encode(device));
             } catch (err) {

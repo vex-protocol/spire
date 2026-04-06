@@ -45,15 +45,14 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
                         ...entry,
                         size: stat.size,
                         birthtime: stat.birthtime,
-                    })
+                    }),
                 );
             });
         }
     });
 
     router.post("/json", protect, async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any)
-            .device;
+        const deviceDetails: IDevice | undefined = (req as any).device;
         const payload: IFilePayload = req.body;
 
         if (!deviceDetails) {
@@ -89,8 +88,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.post("/", protect, multer().single("file"), async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any)
-            .device;
+        const deviceDetails: IDevice | undefined = (req as any).device;
         const payload: IFilePayload = req.body;
 
         if (!deviceDetails) {

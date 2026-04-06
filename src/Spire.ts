@@ -2,7 +2,14 @@ import * as fs from "node:fs";
 import { Server } from "http";
 
 import { XUtils } from "@vex-chat/crypto";
-import type { IActionToken, IBaseMsg, IDevice, IMailWS, INotifyMsg, IRegistrationPayload } from "@vex-chat/types";
+import type {
+    IActionToken,
+    IBaseMsg,
+    IDevice,
+    IMailWS,
+    INotifyMsg,
+    IRegistrationPayload,
+} from "@vex-chat/types";
 import { TokenScopes } from "@vex-chat/types";
 import { EventEmitter } from "events";
 import express from "express";
@@ -34,7 +41,6 @@ for (const dir of directories) {
         fs.mkdirSync(dir);
     }
 }
-
 
 export interface ISpireOptions {
     logLevel?:
@@ -101,7 +107,7 @@ export class Spire extends EventEmitter {
         event: string,
         transmissionID: string,
         data?: any,
-        deviceID?: string
+        deviceID?: string,
     ): void {
         for (const client of this.clients) {
             if (deviceID) {
@@ -128,9 +134,7 @@ export class Spire extends EventEmitter {
         }
     }
 
-    private createActionToken(
-        scope: TokenScopes
-    ): IActionToken {
+    private createActionToken(scope: TokenScopes): IActionToken {
         const token: IActionToken = {
             key: uuid.v4(),
             time: new Date(Date.now()),
@@ -146,10 +150,7 @@ export class Spire extends EventEmitter {
         }
     }
 
-    private validateToken(
-        key: string,
-        scope: TokenScopes
-    ): boolean {
+    private validateToken(key: string, scope: TokenScopes): boolean {
         this.log.info("Validating token: " + key);
         for (const rKey of this.actionTokens) {
             if (rKey.key === key) {
@@ -181,7 +182,7 @@ export class Spire extends EventEmitter {
             this.log,
             this.validateToken.bind(this),
             this.signKeys,
-            this.notify.bind(this)
+            this.notify.bind(this),
         );
 
         // All the app logic strongly coupled to spire class :/
@@ -207,18 +208,18 @@ export class Spire extends EventEmitter {
                 this.db,
                 this.notify.bind(this),
                 userDetails,
-                this.options
+                this.options,
             );
 
             client.on("fail", () => {
                 this.log.info(
-                    "Client connection is down, removing: " + client.toString()
+                    "Client connection is down, removing: " + client.toString(),
                 );
                 if (this.clients.includes(client)) {
                     this.clients.splice(this.clients.indexOf(client), 1);
                 }
                 this.log.info(
-                    "Current authorized clients: " + this.clients.length
+                    "Current authorized clients: " + this.clients.length,
                 );
             });
 
@@ -226,7 +227,7 @@ export class Spire extends EventEmitter {
                 this.log.info("New client authorized: " + client.toString());
                 this.clients.push(client);
                 this.log.info(
-                    "Current authorized clients: " + this.clients.length
+                    "Current authorized clients: " + this.clients.length,
                 );
             });
         });
@@ -301,7 +302,7 @@ export class Spire extends EventEmitter {
                     console.error(err.toString());
                     return res.sendStatus(500);
                 }
-            }
+            },
         );
 
         this.api.post("/whoami", async (req, res) => {
@@ -315,7 +316,7 @@ export class Spire extends EventEmitter {
                     user: (req as any).user,
                     exp: (req as any).exp,
                     token: req.cookies.auth,
-                })
+                }),
             );
         });
 
@@ -323,38 +324,35 @@ export class Spire extends EventEmitter {
             const token = jwt.sign(
                 { user: censorUser((req as any).user) },
                 process.env.SPK!,
-                { expiresIn: -1 }
+                { expiresIn: -1 },
             );
             res.cookie("auth", token, { path: "/" });
             res.sendStatus(200);
         });
 
         this.api.post("/mail", protect, async (req, res) => {
-            const senderDeviceDetails:
-                | IDevice
-                | undefined = (req as any).device;
+            const senderDeviceDetails: IDevice | undefined = (req as any)
+                .device;
             if (!senderDeviceDetails) {
                 res.sendStatus(401);
                 return;
             }
             const authorUserDetails: ICensoredUser = (req as any).user;
 
-            const {
-                header,
-                mail,
-            }: { header: Uint8Array; mail: IMailWS } = req.body;
+            const { header, mail }: { header: Uint8Array; mail: IMailWS } =
+                req.body;
 
             try {
                 await this.db.saveMail(
                     mail,
                     header,
                     senderDeviceDetails.deviceID,
-                    authorUserDetails.userID
+                    authorUserDetails.userID,
                 );
                 this.log.info("Received mail for " + mail.recipient);
 
                 const recipientDeviceDetails = await this.db.retrieveDevice(
-                    mail.recipient
+                    mail.recipient,
                 );
                 if (!recipientDeviceDetails) {
                     res.sendStatus(400);
@@ -367,7 +365,7 @@ export class Spire extends EventEmitter {
                     "mail",
                     uuid.v4(),
                     null,
-                    mail.recipient
+                    mail.recipient,
                 );
             } catch (err) {
                 this.log.error(err);
@@ -381,21 +379,21 @@ export class Spire extends EventEmitter {
 
             if (typeof credentials.password !== "string") {
                 res.status(400).send(
-                    "Password is required and must be a string."
+                    "Password is required and must be a string.",
                 );
                 return;
             }
 
             if (typeof credentials.username !== "string") {
                 res.status(400).send(
-                    "Username is required and must be a string."
+                    "Username is required and must be a string.",
                 );
                 return;
             }
 
             try {
                 const userEntry = await this.db.retrieveUser(
-                    credentials.username
+                    credentials.username,
                 );
                 if (!userEntry) {
                     res.sendStatus(404);
@@ -405,7 +403,7 @@ export class Spire extends EventEmitter {
 
                 const salt = XUtils.decodeHex(userEntry.passwordSalt);
                 const payloadHash = XUtils.encodeHex(
-                    hashPassword(credentials.password, salt)
+                    hashPassword(credentials.password, salt),
                 );
 
                 if (payloadHash !== userEntry.passwordHash) {
@@ -416,7 +414,7 @@ export class Spire extends EventEmitter {
                 const token = jwt.sign(
                     { user: censorUser(userEntry) },
                     process.env.SPK!,
-                    { expiresIn: JWT_EXPIRY }
+                    { expiresIn: JWT_EXPIRY },
                 );
 
                 // just to make sure
@@ -424,7 +422,7 @@ export class Spire extends EventEmitter {
 
                 res.cookie("auth", token, { path: "/" });
                 res.send(
-                    msgpack.encode({ user: censorUser(userEntry), token })
+                    msgpack.encode({ user: censorUser(userEntry), token }),
                 );
             } catch (err) {
                 this.log.error(err.toString());
@@ -437,27 +435,26 @@ export class Spire extends EventEmitter {
                 const regPayload: IRegistrationPayload = req.body;
                 if (!usernameRegex.test(regPayload.username)) {
                     res.status(400).send({
-                        error:
-                            "Username must be between three and nineteen letters, digits, or underscores.",
+                        error: "Username must be between three and nineteen letters, digits, or underscores.",
                     });
                     return;
                 }
 
                 const regKey = nacl.sign.open(
                     XUtils.decodeHex(regPayload.signed),
-                    XUtils.decodeHex(regPayload.signKey)
+                    XUtils.decodeHex(regPayload.signKey),
                 );
 
                 if (
                     regKey &&
                     this.validateToken(
                         uuid.stringify(regKey),
-                        TokenScopes.Register
+                        TokenScopes.Register,
                     )
                 ) {
                     const [user, err] = await this.db.createUser(
                         regKey,
-                        regPayload
+                        regPayload,
                     );
                     if (err !== null) {
                         switch ((err as any).code) {
@@ -470,19 +467,17 @@ export class Spire extends EventEmitter {
                                     .includes("users_signkey_unique");
 
                                 this.log.warn(
-                                    "User attempted to register duplicate account."
+                                    "User attempted to register duplicate account.",
                                 );
                                 if (usernameConflict) {
                                     res.status(400).send({
-                                        error:
-                                            "Username is already registered.",
+                                        error: "Username is already registered.",
                                     });
                                     return;
                                 }
                                 if (signKeyConflict) {
                                     res.status(400).send({
-                                        error:
-                                            "Public key is already registered.",
+                                        error: "Public key is already registered.",
                                     });
                                     return;
                                 }
@@ -493,7 +488,7 @@ export class Spire extends EventEmitter {
                             default:
                                 this.log.info(
                                     "Unsupported sql error type: " +
-                                        (err as any).code
+                                        (err as any).code,
                                 );
                                 this.log.error(err);
                                 res.sendStatus(500);

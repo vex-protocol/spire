@@ -35,7 +35,7 @@ const normalizePath = (prefix: string, pathValue: string) => {
 const addOperation = (
     paths: IOpenApiSpec["paths"],
     method: string,
-    openApiPath: string
+    openApiPath: string,
 ) => {
     const key = method.toLowerCase();
     if (!paths[openApiPath]) {
@@ -56,7 +56,7 @@ const addOperation = (
 const collectFromStack = (
     stack: any[],
     paths: IOpenApiSpec["paths"],
-    prefix = ""
+    prefix = "",
 ) => {
     for (const layer of stack) {
         if (layer?.route?.path && layer?.route?.methods) {
@@ -77,7 +77,7 @@ const collectFromStack = (
 
 const createOpenApiSpec = (
     api: AnyApp,
-    mountedRouters: IRouterMount[]
+    mountedRouters: IRouterMount[],
 ): IOpenApiSpec => {
     const paths: IOpenApiSpec["paths"] = {};
 
@@ -96,7 +96,8 @@ const createOpenApiSpec = (
         info: {
             title: "Spire API",
             version: "1.0.0",
-            description: "Auto-generated endpoint reference for the Spire Express API.",
+            description:
+                "Auto-generated endpoint reference for the Spire Express API.",
         },
         paths,
     };
@@ -104,7 +105,7 @@ const createOpenApiSpec = (
 
 export const setupOpenApiDocs = (
     api: express.Application,
-    mountedRouters: IRouterMount[]
+    mountedRouters: IRouterMount[],
 ) => {
     const app = api as AnyApp;
 
@@ -119,6 +120,6 @@ export const setupOpenApiDocs = (
             swaggerOptions: {
                 url: "/docs.json",
             },
-        })
+        }),
     );
 };
