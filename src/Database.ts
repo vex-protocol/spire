@@ -1,5 +1,21 @@
 import { xMakeNonce, XUtils } from "@vex-chat/crypto";
-import type { IChannel, IDevice, IDevicePayload, IEmoji, IFileSQL, IInvite, IKeyBundle, IMailSQL, IMailWS, IPermission, IPreKeysSQL, IPreKeysWS, IRegistrationPayload, IServer, IUser } from "@vex-chat/types";
+import type {
+    IChannel,
+    IDevice,
+    IDevicePayload,
+    IEmoji,
+    IFileSQL,
+    IInvite,
+    IKeyBundle,
+    IMailSQL,
+    IMailWS,
+    IPermission,
+    IPreKeysSQL,
+    IPreKeysWS,
+    IRegistrationPayload,
+    IServer,
+    IUser,
+} from "@vex-chat/types";
 import { EventEmitter } from "events";
 import { pbkdf2Sync } from "node:crypto";
 import knex, { type Knex } from "knex";
@@ -60,7 +76,7 @@ export class Database extends EventEmitter {
     public async saveOTK(
         userID: string,
         deviceID: string,
-        otks: IPreKeysWS[]
+        otks: IPreKeysWS[],
     ): Promise<void> {
         for (const otk of otks) {
             const newOTK: IPreKeysSQL = {
@@ -75,9 +91,7 @@ export class Database extends EventEmitter {
         }
     }
 
-    public async getPreKeys(
-        deviceID: string
-    ): Promise<IPreKeysWS | null> {
+    public async getPreKeys(deviceID: string): Promise<IPreKeysWS | null> {
         const rows: IPreKeysSQL[] = await this.db
             .from("preKeys")
             .select()
@@ -101,9 +115,7 @@ export class Database extends EventEmitter {
         return this.db.from("users").select();
     }
 
-    public async getKeyBundle(
-        deviceID: string
-    ): Promise<IKeyBundle | null> {
+    public async getKeyBundle(deviceID: string): Promise<IKeyBundle | null> {
         const device = await this.retrieveDevice(deviceID);
         if (!device) {
             throw new Error("DeviceID not found.");
@@ -123,7 +135,7 @@ export class Database extends EventEmitter {
 
     public async createDevice(
         owner: string,
-        payload: IDevicePayload
+        payload: IDevicePayload,
     ): Promise<IDevice> {
         const device = {
             owner,
@@ -151,15 +163,9 @@ export class Database extends EventEmitter {
     }
 
     public async deleteDevice(deviceID: string): Promise<void> {
-        await this.db
-            .from("preKeys")
-            .where({ deviceID })
-            .del();
+        await this.db.from("preKeys").where({ deviceID }).del();
 
-        await this.db
-            .from("oneTimeKeys")
-            .where({ deviceID })
-            .del();
+        await this.db.from("oneTimeKeys").where({ deviceID }).del();
 
         return this.db
             .from("devices")
@@ -167,9 +173,7 @@ export class Database extends EventEmitter {
             .update({ deleted: true });
     }
 
-    public async retrieveDevice(
-        deviceID: string
-    ): Promise<IDevice | null> {
+    public async retrieveDevice(deviceID: string): Promise<IDevice | null> {
         if (uuid.validate(deviceID)) {
             const rows = await this.db
                 .from("devices")
@@ -196,9 +200,7 @@ export class Database extends EventEmitter {
         return null;
     }
 
-    public async retrieveUserDeviceList(
-        userIDs: string[]
-    ): Promise<IDevice[]> {
+    public async retrieveUserDeviceList(userIDs: string[]): Promise<IDevice[]> {
         return this.db
             .from("devices")
             .select()
@@ -247,7 +249,7 @@ export class Database extends EventEmitter {
         userID: string,
         resourceType: string,
         resourceID: string,
-        powerLevel: number
+        powerLevel: number,
     ): Promise<IPermission> {
         const permissionID = uuid.v4();
 
@@ -272,26 +274,16 @@ export class Database extends EventEmitter {
         return permission;
     }
 
-    public async retrieveInvite(
-        inviteID: string
-    ): Promise<IInvite | null> {
-        const rows = await this.db
-            .from("invites")
-            .select()
-            .where({ inviteID });
+    public async retrieveInvite(inviteID: string): Promise<IInvite | null> {
+        const rows = await this.db.from("invites").select().where({ inviteID });
         if (rows.length === 0) {
             return null;
         }
         return rows[0];
     }
 
-    public async retrieveServerInvites(
-        serverID: string
-    ): Promise<IInvite[]> {
-        const rows = await this.db
-            .from("invites")
-            .select()
-            .where({ serverID });
+    public async retrieveServerInvites(serverID: string): Promise<IInvite[]> {
+        const rows = await this.db.from("invites").select().where({ serverID });
 
         return rows.filter((invite: IInvite) => {
             const valid =
@@ -307,17 +299,14 @@ export class Database extends EventEmitter {
     }
 
     public async deleteInvite(inviteID: string): Promise<void> {
-        await this.db
-            .from("invites")
-            .where({ inviteID })
-            .delete();
+        await this.db.from("invites").where({ inviteID }).delete();
     }
 
     public async createInvite(
         inviteID: string,
         serverID: string,
         ownerID: string,
-        expiration: string
+        expiration: string,
     ): Promise<IInvite> {
         const invite: IInvite = {
             inviteID,
@@ -330,9 +319,7 @@ export class Database extends EventEmitter {
         return invite;
     }
 
-    public async retrieveGroupMembers(
-        channelID: string
-    ): Promise<IUser[]> {
+    public async retrieveGroupMembers(channelID: string): Promise<IUser[]> {
         const channel = await this.retrieveChannel(channelID);
         if (!channel) {
             return [];
@@ -353,9 +340,7 @@ export class Database extends EventEmitter {
         return groupMembers;
     }
 
-    public async retrieveChannel(
-        channelID: string
-    ): Promise<IChannel | null> {
+    public async retrieveChannel(channelID: string): Promise<IChannel | null> {
         const channels: IChannel[] = await this.db
             .from("channels")
             .select()
@@ -368,9 +353,7 @@ export class Database extends EventEmitter {
         return channels[0];
     }
 
-    public async retrieveChannels(
-        serverID: string
-    ): Promise<IChannel[]> {
+    public async retrieveChannels(serverID: string): Promise<IChannel[]> {
         const channels: IChannel[] = await this.db
             .from("channels")
             .select()
@@ -380,7 +363,7 @@ export class Database extends EventEmitter {
 
     public async createChannel(
         name: string,
-        serverID: string
+        serverID: string,
     ): Promise<IChannel> {
         const channel: IChannel = {
             channelID: uuid.v4(),
@@ -391,10 +374,7 @@ export class Database extends EventEmitter {
         return channel;
     }
 
-    public async createServer(
-        name: string,
-        ownerID: string
-    ): Promise<IServer> {
+    public async createServer(name: string, ownerID: string): Promise<IServer> {
         // create the server
         const server: IServer = {
             name,
@@ -414,12 +394,9 @@ export class Database extends EventEmitter {
      *
      * @param resourceID
      */
-    public async retrieveAffectedUsers(
-        resourceID: string
-    ): Promise<IUser[]> {
-        const permissionList = await this.retrievePermissionsByResourceID(
-            resourceID
-        );
+    public async retrieveAffectedUsers(resourceID: string): Promise<IUser[]> {
+        const permissionList =
+            await this.retrievePermissionsByResourceID(resourceID);
 
         const users: IUser[] = [];
         for (const permission of permissionList) {
@@ -433,17 +410,14 @@ export class Database extends EventEmitter {
     }
 
     public async retrievePermissionsByResourceID(
-        resourceID: string
+        resourceID: string,
     ): Promise<IPermission[]> {
-        return this.db
-            .from("permissions")
-            .select()
-            .where({ resourceID });
+        return this.db.from("permissions").select().where({ resourceID });
     }
 
     public async retrievePermissions(
         userID: string,
-        resourceType: string
+        resourceType: string,
     ): Promise<IPermission[]> {
         if (resourceType === "all") {
             const sList = await this.db
@@ -459,9 +433,7 @@ export class Database extends EventEmitter {
         return serverList;
     }
 
-    public async retrieveServer(
-        serverID: string
-    ): Promise<IServer | null> {
+    public async retrieveServer(serverID: string): Promise<IServer | null> {
         const rows = await this.db
             .from("servers")
             .select()
@@ -475,21 +447,15 @@ export class Database extends EventEmitter {
     }
 
     public async deletePermissions(resourceID: string): Promise<void> {
-        await this.db
-            .from("permissions")
-            .where({ resourceID })
-            .delete();
+        await this.db.from("permissions").where({ resourceID }).delete();
     }
 
     public async deletePermission(permissionID: string): Promise<void> {
-        await this.db
-            .from("permissions")
-            .where({ permissionID })
-            .delete();
+        await this.db.from("permissions").where({ permissionID }).delete();
     }
 
     public async retrievePermission(
-        permissionID: string
+        permissionID: string,
     ): Promise<IPermission | null> {
         const rows = await this.db
             .from("permissions")
@@ -505,14 +471,8 @@ export class Database extends EventEmitter {
 
     public async deleteChannel(channelID: string): Promise<void> {
         await this.deletePermissions(channelID);
-        await this.db
-            .from("mail")
-            .where({ group: channelID })
-            .delete();
-        await this.db
-            .from("channels")
-            .where({ channelID })
-            .delete();
+        await this.db.from("mail").where({ group: channelID }).delete();
+        await this.db.from("channels").where({ channelID }).delete();
     }
 
     public async createEmoji(emoji: IEmoji): Promise<void> {
@@ -520,28 +480,15 @@ export class Database extends EventEmitter {
     }
 
     public async deleteEmoji(emojiID: string): Promise<void> {
-        await this.db
-            .from("emojis")
-            .where({ emojiID })
-            .del();
+        await this.db.from("emojis").where({ emojiID }).del();
     }
 
-    public async retrieveEmojiList(
-        userID: string
-    ): Promise<IEmoji[]> {
-        return this.db
-            .from("emojis")
-            .select()
-            .where({ owner: userID });
+    public async retrieveEmojiList(userID: string): Promise<IEmoji[]> {
+        return this.db.from("emojis").select().where({ owner: userID });
     }
 
-    public async retrieveEmoji(
-        emojiID: string
-    ): Promise<IEmoji | null> {
-        const rows = await this.db
-            .from("emojis")
-            .select()
-            .where({ emojiID });
+    public async retrieveEmoji(emojiID: string): Promise<IEmoji | null> {
+        const rows = await this.db.from("emojis").select().where({ emojiID });
         if (rows.length === 0) {
             return null;
         }
@@ -554,15 +501,10 @@ export class Database extends EventEmitter {
         for (const channel of channels) {
             await this.deleteChannel(channel.channelID);
         }
-        await this.db
-            .from("servers")
-            .where({ serverID })
-            .delete();
+        await this.db.from("servers").where({ serverID }).delete();
     }
 
-    public async retrieveServers(
-        userID: string
-    ): Promise<IServer[]> {
+    public async retrieveServers(userID: string): Promise<IServer[]> {
         const serverPerms = await this.retrievePermissions(userID, "server");
         if (!serverPerms) {
             return [];
@@ -579,7 +521,7 @@ export class Database extends EventEmitter {
 
     public async createUser(
         regKey: Uint8Array,
-        regPayload: IRegistrationPayload
+        regPayload: IRegistrationPayload,
     ): Promise<[IUser | null, Error | null]> {
         try {
             const salt = xMakeNonce();
@@ -606,13 +548,8 @@ export class Database extends EventEmitter {
         return this.db("files").insert(file);
     }
 
-    public async retrieveFile(
-        fileID: string
-    ): Promise<IFileSQL | null> {
-        const file = await this.db
-            .from("files")
-            .select()
-            .where({ fileID });
+    public async retrieveFile(fileID: string): Promise<IFileSQL | null> {
+        const file = await this.db.from("files").select().where({ fileID });
         if (file.length === 0) {
             return null;
         }
@@ -620,9 +557,7 @@ export class Database extends EventEmitter {
     }
 
     // the identifier can be username, public key, or userID
-    public async retrieveUser(
-        userIdentifier: string
-    ): Promise<IUser | null> {
+    public async retrieveUser(userIdentifier: string): Promise<IUser | null> {
         let rows: IUser[] = [];
         if (uuid.validate(userIdentifier)) {
             rows = await this.db
@@ -649,7 +584,7 @@ export class Database extends EventEmitter {
         mail: IMailWS,
         header: Uint8Array,
         deviceID: string,
-        userID: string
+        userID: string,
     ): Promise<void> {
         const entry: IMailSQL = {
             mailID: mail.mailID,
@@ -671,7 +606,7 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveMail(
-        deviceID: string
+        deviceID: string,
         // tslint:disable-next-line: array-type
     ): Promise<[Uint8Array, IMailWS, Date][]> {
         const rows: IMailSQL[] = await this.db
@@ -679,9 +614,9 @@ export class Database extends EventEmitter {
             .select()
             .where({ recipient: deviceID });
 
-        const fixMail: (
-            mail: IMailSQL
-        ) => [Uint8Array, IMailWS, Date] = (mail) => {
+        const fixMail: (mail: IMailSQL) => [Uint8Array, IMailWS, Date] = (
+            mail,
+        ) => {
             const msgb: IMailWS = {
                 mailType: mail.mailType,
                 mailID: mail.mailID,
@@ -735,111 +670,141 @@ export class Database extends EventEmitter {
 
     private async init(): Promise<void> {
         if (!(await this.db.schema.hasTable("invites"))) {
-            await this.db.schema.createTable("invites", (table: Knex.CreateTableBuilder) => {
-                table.string("inviteID").primary();
-                table.string("serverID").index();
-                table.string("owner");
-                table.string("expiration");
-            });
+            await this.db.schema.createTable(
+                "invites",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("inviteID").primary();
+                    table.string("serverID").index();
+                    table.string("owner");
+                    table.string("expiration");
+                },
+            );
         }
 
         if (!(await this.db.schema.hasTable("users"))) {
-            await this.db.schema.createTable("users", (table: Knex.CreateTableBuilder) => {
-                table.string("userID").primary();
-                table.string("username").unique();
-                table.string("passwordHash");
-                table.string("passwordSalt");
-                table.dateTime("lastSeen");
-            });
+            await this.db.schema.createTable(
+                "users",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("userID").primary();
+                    table.string("username").unique();
+                    table.string("passwordHash");
+                    table.string("passwordSalt");
+                    table.dateTime("lastSeen");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("devices"))) {
-            await this.db.schema.createTable("devices", (table: Knex.CreateTableBuilder) => {
-                table.string("deviceID").primary();
-                table.string("signKey").unique();
-                table.string("owner");
-                table.string("name");
-                table.string("lastLogin");
-                table.boolean("deleted");
-            });
+            await this.db.schema.createTable(
+                "devices",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("deviceID").primary();
+                    table.string("signKey").unique();
+                    table.string("owner");
+                    table.string("name");
+                    table.string("lastLogin");
+                    table.boolean("deleted");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("mail"))) {
-            await this.db.schema.createTable("mail", (table: Knex.CreateTableBuilder) => {
-                table.string("nonce").primary();
-                table.string("recipient").index();
-                table.string("mailID");
-                table.string("sender");
-                table.string("header");
-                table.text("cipher", "mediumtext");
-                table.string("group");
-                table.text("extra");
-                table.integer("mailType");
-                table.dateTime("time");
-                table.boolean("forward");
-                table.string("authorID");
-                table.string("readerID");
-            });
+            await this.db.schema.createTable(
+                "mail",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("nonce").primary();
+                    table.string("recipient").index();
+                    table.string("mailID");
+                    table.string("sender");
+                    table.string("header");
+                    table.text("cipher", "mediumtext");
+                    table.string("group");
+                    table.text("extra");
+                    table.integer("mailType");
+                    table.dateTime("time");
+                    table.boolean("forward");
+                    table.string("authorID");
+                    table.string("readerID");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("preKeys"))) {
-            await this.db.schema.createTable("preKeys", (table: Knex.CreateTableBuilder) => {
-                table.string("keyID").primary();
-                table.string("userID").index();
-                table
-                    .string("deviceID")
-                    .index()
-                    .unique();
-                table.string("publicKey");
-                table.string("signature");
-                table.integer("index");
-            });
+            await this.db.schema.createTable(
+                "preKeys",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("keyID").primary();
+                    table.string("userID").index();
+                    table.string("deviceID").index().unique();
+                    table.string("publicKey");
+                    table.string("signature");
+                    table.integer("index");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("oneTimeKeys"))) {
-            await this.db.schema.createTable("oneTimeKeys", (table: Knex.CreateTableBuilder) => {
-                table.string("keyID").primary();
-                table.string("userID").index();
-                table.string("deviceID").index();
-                table.string("publicKey");
-                table.string("signature");
-                table.integer("index");
-            });
+            await this.db.schema.createTable(
+                "oneTimeKeys",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("keyID").primary();
+                    table.string("userID").index();
+                    table.string("deviceID").index();
+                    table.string("publicKey");
+                    table.string("signature");
+                    table.integer("index");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("servers"))) {
-            await this.db.schema.createTable("servers", (table: Knex.CreateTableBuilder) => {
-                table.string("serverID").primary();
-                table.string("name");
-                table.string("icon");
-            });
+            await this.db.schema.createTable(
+                "servers",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("serverID").primary();
+                    table.string("name");
+                    table.string("icon");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("channels"))) {
-            await this.db.schema.createTable("channels", (table: Knex.CreateTableBuilder) => {
-                table.string("channelID").primary();
-                table.string("serverID");
-                table.string("name");
-            });
+            await this.db.schema.createTable(
+                "channels",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("channelID").primary();
+                    table.string("serverID");
+                    table.string("name");
+                },
+            );
         }
         if (!(await this.db.schema.hasTable("permissions"))) {
-            await this.db.schema.createTable("permissions", (table: Knex.CreateTableBuilder) => {
-                table.string("permissionID").primary();
-                table.string("userID").index();
-                table.string("resourceType");
-                table.string("resourceID").index();
-                table.integer("powerLevel");
-            });
+            await this.db.schema.createTable(
+                "permissions",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("permissionID").primary();
+                    table.string("userID").index();
+                    table.string("resourceType");
+                    table.string("resourceID").index();
+                    table.integer("powerLevel");
+                },
+            );
         }
 
         if (!(await this.db.schema.hasTable("files"))) {
-            await this.db.schema.createTable("files", (table: Knex.CreateTableBuilder) => {
-                table.string("fileID").primary();
-                table.string("owner").index();
-                table.string("nonce");
-            });
+            await this.db.schema.createTable(
+                "files",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("fileID").primary();
+                    table.string("owner").index();
+                    table.string("nonce");
+                },
+            );
         }
 
         if (!(await this.db.schema.hasTable("emojis"))) {
-            await this.db.schema.createTable("emojis", (table: Knex.CreateTableBuilder) => {
-                table.string("emojiID").primary();
-                table.string("owner").index();
-                table.string("name");
-            });
+            await this.db.schema.createTable(
+                "emojis",
+                (table: Knex.CreateTableBuilder) => {
+                    table.string("emojiID").primary();
+                    table.string("owner").index();
+                    table.string("name");
+                },
+            );
         }
 
         this.emit("ready");

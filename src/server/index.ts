@@ -42,7 +42,6 @@ export const ALLOWED_IMAGE_TYPES = [
     "image/avif",
 ];
 
-
 interface IInvitePayload {
     serverID: string;
     duration: string;
@@ -115,8 +114,8 @@ export const initApp = (
         event: string,
         transmissionID: string,
         data?: any,
-        deviceID?: string
-    ) => void
+        deviceID?: string,
+    ) => void,
 ) => {
     // INIT ROUTERS
     const userRouter = getUserRouter(db, log, tokenValidator);
@@ -131,7 +130,7 @@ export const initApp = (
         express.raw({
             type: "application/msgpack",
             limit: "20mb",
-        })
+        }),
     );
     apiAny.use(helmet());
     apiAny.use(cookieParser());
@@ -176,7 +175,7 @@ export const initApp = (
 
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
 
         let hasPermission = false;
@@ -208,7 +207,7 @@ export const initApp = (
             uuid.v4(),
             serverEntry.serverID,
             userDetails.userID,
-            expires.toString()
+            expires.toString(),
         );
         res.send(msgpack.encode(invite));
     });
@@ -218,7 +217,7 @@ export const initApp = (
 
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
 
         let hasPermission = false;
@@ -244,7 +243,7 @@ export const initApp = (
         const serverID = req.params.id;
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
         for (const permission of permissions) {
             if (
@@ -267,7 +266,7 @@ export const initApp = (
         const { name } = req.body;
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
         for (const permission of permissions) {
             if (
@@ -293,12 +292,12 @@ export const initApp = (
         const userDetails = (req as any).user;
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
         for (const permission of permissions) {
             if (serverID === permission.resourceID) {
                 const channels = await db.retrieveChannels(
-                    permission.resourceID
+                    permission.resourceID,
                 );
                 res.send(msgpack.encode(channels));
                 return;
@@ -316,9 +315,8 @@ export const initApp = (
         const userDetails: ICensoredUser = (req as any).user;
         const serverID = req.params.serverID;
         try {
-            const permissions = await db.retrievePermissionsByResourceID(
-                serverID
-            );
+            const permissions =
+                await db.retrievePermissionsByResourceID(serverID);
             if (permissions) {
                 let found = false;
                 for (const perm of permissions) {
@@ -353,7 +351,7 @@ export const initApp = (
 
         const permissions = await db.retrievePermissions(
             userDetails.userID,
-            "server"
+            "server",
         );
         let found = false;
         for (const permission of permissions) {
@@ -368,7 +366,7 @@ export const initApp = (
                 res.sendStatus(200);
 
                 const affectedUsers = await db.retrieveAffectedUsers(
-                    channel.serverID
+                    channel.serverID,
                 );
                 // tell everyone about server change
                 for (const user of affectedUsers) {
@@ -376,7 +374,7 @@ export const initApp = (
                         user.userID,
                         "serverChange",
                         uuid.v4(),
-                        channel.serverID
+                        channel.serverID,
                     );
                 }
                 return;
@@ -408,7 +406,7 @@ export const initApp = (
 
             const permissions = await db.retrievePermissions(
                 userDetails.userID,
-                permToDelete.resourceType
+                permToDelete.resourceType,
             );
 
             for (const perm of permissions) {
@@ -443,18 +441,17 @@ export const initApp = (
             }
             const permissions = await db.retrievePermissions(
                 userDetails.userID,
-                "server"
+                "server",
             );
             for (const permission of permissions) {
                 if (permission.resourceID === channel.serverID) {
                     // we've got the permission, it's ok to give them the userlist
-                    const groupMembers = await db.retrieveGroupMembers(
-                        channelID
-                    );
+                    const groupMembers =
+                        await db.retrieveGroupMembers(channelID);
                     res.send(
                         msgpack.encode(
-                            groupMembers.map((user) => censorUser(user))
-                        )
+                            groupMembers.map((user) => censorUser(user)),
+                        ),
                     );
                 }
             }
@@ -494,8 +491,7 @@ export const initApp = (
     });
 
     api.post("/device/:id/mail", protect, async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any)
-            .device;
+        const deviceDetails: IDevice | undefined = (req as any).device;
         if (!deviceDetails) {
             res.sendStatus(401);
             return;
@@ -534,8 +530,7 @@ export const initApp = (
     });
 
     api.get("/device/:id/otk/count", protect, async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any)
-            .device;
+        const deviceDetails: IDevice | undefined = (req as any).device;
         if (!deviceDetails) {
             res.sendStatus(401);
             return;
@@ -570,7 +565,7 @@ export const initApp = (
 
         const message = nacl.sign.open(
             otk.signature,
-            XUtils.decodeHex(device.signKey)
+            XUtils.decodeHex(device.signKey),
         );
 
         if (!message) {
@@ -630,7 +625,7 @@ export const initApp = (
         const serverEntry = await db.retrieveServer(req.params.serverID);
 
         const permissionList = await db.retrievePermissionsByResourceID(
-            req.params.serverID
+            req.params.serverID,
         );
         let hasPermission = false;
         for (const permission of permissionList) {
@@ -697,15 +692,14 @@ export const initApp = (
             const payload: IEmojiPayload = req.body;
             const serverEntry = await db.retrieveServer(req.params.serverID);
             const userDetails: ICensoredUser = (req as any).user;
-            const deviceDetails: IDevice | undefined = (req as any)
-                .device;
+            const deviceDetails: IDevice | undefined = (req as any).device;
             if (!deviceDetails) {
                 res.sendStatus(401);
                 return;
             }
 
             const permissionList = await db.retrievePermissionsByResourceID(
-                req.params.serverID
+                req.params.serverID,
             );
             let hasPermission = false;
             for (const permission of permissionList) {
@@ -770,7 +764,7 @@ export const initApp = (
                 log.warn(err);
                 res.sendStatus(500);
             }
-        }
+        },
     );
 
     // COMPLEX RESOURCES

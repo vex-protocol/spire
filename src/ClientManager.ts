@@ -1,6 +1,17 @@
 import { sleep } from "@extrahash/sleep";
 import { xConcat, XUtils } from "@vex-chat/crypto";
-import type { IBaseMsg, IChallMsg, IDevice, IErrMsg, IMailWS, IReceiptMsg, IResourceMsg, IRespMsg, ISucessMsg, IUser } from "@vex-chat/types";
+import type {
+    IBaseMsg,
+    IChallMsg,
+    IDevice,
+    IErrMsg,
+    IMailWS,
+    IReceiptMsg,
+    IResourceMsg,
+    IRespMsg,
+    ISucessMsg,
+    IUser,
+} from "@vex-chat/types";
 import { SocketAuthErrors } from "@vex-chat/types";
 import chalk from "chalk";
 import { EventEmitter } from "events";
@@ -64,7 +75,7 @@ export class ClientManager extends EventEmitter {
         event: string,
         transmissionID: string,
         data?: any,
-        deviceID?: string
+        deviceID?: string,
     ) => void;
 
     constructor(
@@ -72,7 +83,7 @@ export class ClientManager extends EventEmitter {
         db: Database,
         notify: (userID: string, event: string, transmissionID: string) => void,
         userDetails: ICensoredUser,
-        options?: ISpireOptions
+        options?: ISpireOptions,
     ) {
         super();
         this.conn = ws;
@@ -116,7 +127,7 @@ export class ClientManager extends EventEmitter {
                 " " +
                 this.toString() +
                 " " +
-                chalk.yellow(Buffer.byteLength(packedMessage))
+                chalk.yellow(Buffer.byteLength(packedMessage)),
         );
 
         this.log.debug(chalk.red.bold("OUT"), msg);
@@ -190,7 +201,7 @@ export class ClientManager extends EventEmitter {
             for (const device of devices) {
                 const verified = nacl.sign.open(
                     msg.signed,
-                    XUtils.decodeHex(device.signKey)
+                    XUtils.decodeHex(device.signKey),
                 );
                 if (verified) {
                     message = verified;
@@ -207,7 +218,7 @@ export class ClientManager extends EventEmitter {
             if (
                 XUtils.bytesEqual(
                     this.challengeID as Uint8Array,
-                    message as Uint8Array
+                    message as Uint8Array,
                 )
             ) {
                 this.user = user;
@@ -256,7 +267,7 @@ export class ClientManager extends EventEmitter {
         transmissionID: string,
         data: any,
         header?: Uint8Array,
-        timestamp?: string
+        timestamp?: string,
     ) {
         const msg: ISucessMsg = {
             transmissionID,
@@ -267,10 +278,7 @@ export class ClientManager extends EventEmitter {
         this.send(msg, header);
     }
 
-    private async parseResourceMsg(
-        msg: IResourceMsg,
-        header: Uint8Array
-    ) {
+    private async parseResourceMsg(msg: IResourceMsg, header: Uint8Array) {
         switch (msg.resourceType) {
             case "mail":
                 if (msg.action === "CREATE") {
@@ -281,19 +289,19 @@ export class ClientManager extends EventEmitter {
                             mail,
                             header,
                             this.getDevice().deviceID,
-                            this.getUser().userID
+                            this.getUser().userID,
                         );
                         this.log.info(
-                            "Received mail for " + msg.data.recipient
+                            "Received mail for " + msg.data.recipient,
                         );
 
                         const deviceDetails = await this.db.retrieveDevice(
-                            msg.data.recipient
+                            msg.data.recipient,
                         );
                         if (!deviceDetails) {
                             this.sendErr(
                                 msg.transmissionID,
-                                "No associated user record found for device."
+                                "No associated user record found for device.",
                             );
                             return;
                         }
@@ -304,7 +312,7 @@ export class ClientManager extends EventEmitter {
                             "mail",
                             msg.transmissionID,
                             null,
-                            msg.data.recipient
+                            msg.data.recipient,
                         );
                     } catch (err) {
                         this.log.error(err);
@@ -343,7 +351,7 @@ export class ClientManager extends EventEmitter {
                     "Message is too big. Received size " +
                         size +
                         " while max size is " +
-                        MAX_MSG_SIZE
+                        MAX_MSG_SIZE,
                 );
                 return;
             }
@@ -352,17 +360,17 @@ export class ClientManager extends EventEmitter {
                 chalk.bold("⟵   ") +
                     (msg.type === "resource"
                         ? crudColor(
-                              (msg as IResourceMsg).action.toUpperCase()
+                              (msg as IResourceMsg).action.toUpperCase(),
                           ) +
                           " " +
                           chalk.bold(
-                              (msg as IResourceMsg).resourceType.toUpperCase()
+                              (msg as IResourceMsg).resourceType.toUpperCase(),
                           )
                         : chalk.bold(msg.type.toUpperCase())) +
                     " " +
                     this.toString() +
                     " " +
-                    chalk.yellow(size)
+                    chalk.yellow(size),
             );
             this.log.debug(chalk.red.bold("INH"), header.toString());
             this.log.debug(chalk.red.bold("IN"), msg);
@@ -375,7 +383,7 @@ export class ClientManager extends EventEmitter {
             if (!uuidValidate(msg.transmissionID)) {
                 this.sendErr(
                     uuidv4(),
-                    "transmissionID is required and must be a valid uuid."
+                    "transmissionID is required and must be a valid uuid.",
                 );
                 return;
             }
@@ -388,14 +396,11 @@ export class ClientManager extends EventEmitter {
                     if (!this.authed) {
                         this.sendErr(
                             msg.transmissionID,
-                            "You are not authenticated."
+                            "You are not authenticated.",
                         );
                         break;
                     }
-                    this.parseResourceMsg(
-                        msg as IResourceMsg,
-                        header
-                    );
+                    this.parseResourceMsg(msg as IResourceMsg, header);
                     break;
                 case "response":
                     this.verifyResponse(msg as IRespMsg);

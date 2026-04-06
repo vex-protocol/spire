@@ -18,8 +18,8 @@ export const getInviteRouter = (
         event: string,
         transmissionID: string,
         data?: any,
-        deviceID?: string
-    ) => void
+        deviceID?: string,
+    ) => void,
 ) => {
     const router = express.Router();
     router.patch("/:inviteID", protect, async (req, res) => {
@@ -40,7 +40,7 @@ export const getInviteRouter = (
             userDetails.userID,
             "server",
             invite.serverID,
-            0
+            0,
         );
         res.send(msgpack.encode(permission));
         notify(userDetails.userID, "permission", uuid.v4(), permission);
