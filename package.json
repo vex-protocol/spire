@@ -18,10 +18,6 @@
         "test": "vitest run",
         "gen-spk": "node scripts/gen-spk.js"
     },
-    "peerDependencies": {
-        "@vex-chat/crypto": "^1.0.0-rc.0",
-        "@vex-chat/types": "^1.0.0-rc.0"
-    },
     "devDependencies": {
         "@types/better-sqlite3": "^7.6.0",
         "@types/cookie-parser": "^1.4.2",
@@ -34,8 +30,8 @@
         "@types/node": "^24.12.2",
         "@types/uuid": "^10.0.0",
         "@types/ws": "^8.5.10",
-        "@vex-chat/crypto": "file:.yalc/@vex-chat/crypto",
-        "@vex-chat/types": "file:.yalc/@vex-chat/types",
+        "@vex-chat/crypto": "1.1.0-rc.1",
+        "@vex-chat/types": "^1.0.0-rc.1",
         "prettier": "^3.2.0",
         "typescript": "^6.0.2",
         "vitest": "^3.0.0"
