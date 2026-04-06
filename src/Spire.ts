@@ -297,6 +297,17 @@ export class Spire extends EventEmitter {
                         this.deleteActionToken(token);
                     }, TOKEN_EXPIRY);
 
+                    const acceptHeader =
+                        req.get("accept")?.toLowerCase() || "";
+                    const wantsJson =
+                        acceptHeader.includes("application/json") &&
+                        !acceptHeader.includes("application/msgpack");
+
+                    if (wantsJson) {
+                        return res.json(token);
+                    }
+
+                    res.set("Content-Type", "application/msgpack");
                     return res.send(msgpack.encode(token));
                 } catch (err) {
                     console.error(err.toString());

@@ -40,9 +40,33 @@ const extractPathParameters = (openApiPath) => {
 
 const operationTemplate = (method, openApiPath) => {
     const parameters = extractPathParameters(openApiPath);
+    const hasRequestBody = ["post", "put", "patch"].includes(
+        method.toLowerCase(),
+    );
     return {
         summary: `${method.toUpperCase()} ${openApiPath}`,
         ...(parameters.length > 0 ? { parameters } : {}),
+        ...(hasRequestBody
+            ? {
+                  requestBody: {
+                      required: true,
+                      content: {
+                          "application/json": {
+                              schema: {
+                                  type: "object",
+                                  additionalProperties: true,
+                              },
+                          },
+                          "application/msgpack": {
+                              schema: {
+                                  type: "object",
+                                  additionalProperties: true,
+                              },
+                          },
+                      },
+                  },
+              }
+            : {}),
         responses: {
             200: { description: "Success" },
             400: { description: "Bad request" },
@@ -51,6 +75,85 @@ const operationTemplate = (method, openApiPath) => {
             500: { description: "Server error" },
         },
     };
+};
+
+const endpointOverrides = {
+    "get /token/{tokenType}": {
+        summary: "Create one-time action token",
+        description:
+            "Returns a short-lived action token keyed by `tokenType`. Tokens expire after about 10 minutes (`TOKEN_EXPIRY`) and are one-time use.\n\nCurrently validated in this codebase by:\n- `register` -> `POST /register`\n- `device` -> `POST /user/:id/devices`\n- `connect` -> `POST /device/:id/connect`\n\nThe endpoint also accepts `file`, `avatar`, `invite`, and `emoji`, which are available scopes but are not explicitly validated by a route in this repository at the moment.\n\nAuth behavior:\n- `tokenType=register` is public.\n- All other token types require a valid `auth` cookie.\n\nHow to fetch:\n1. Authenticate first with `POST /auth` to obtain `auth` cookie (except `register`).\n2. Call `GET /token/{tokenType}`.\n3. Use returned token key in the matching flow promptly.",
+        parameters: [
+            {
+                name: "tokenType",
+                in: "path",
+                required: true,
+                description:
+                    "Requested token scope. Allowed values map to server token scopes.",
+                schema: {
+                    type: "string",
+                    enum: [
+                        "file",
+                        "register",
+                        "avatar",
+                        "device",
+                        "invite",
+                        "emoji",
+                        "connect",
+                    ],
+                },
+                examples: {
+                    register: {
+                        summary: "Public registration token",
+                        value: "register",
+                    },
+                    device: {
+                        summary: "Authenticated device enrollment token",
+                        value: "device",
+                    },
+                },
+            },
+        ],
+        responses: {
+            200: {
+                description:
+                    "Token created. Response format follows `Accept` header (`application/msgpack` by default, or `application/json`).",
+                content: {
+                    "application/json": {
+                        schema: {
+                            type: "object",
+                            properties: {
+                                key: { type: "string" },
+                                time: { type: "string", format: "date-time" },
+                                scope: { type: "string" },
+                            },
+                            required: ["key", "time", "scope"],
+                        },
+                    },
+                    "application/msgpack": {
+                        schema: {
+                            type: "object",
+                            properties: {
+                                key: { type: "string" },
+                                time: { type: "string", format: "date-time" },
+                                scope: { type: "string" },
+                            },
+                            required: ["key", "time", "scope"],
+                        },
+                    },
+                },
+            },
+            400: {
+                description: "Invalid tokenType supplied.",
+            },
+            401: {
+                description:
+                    "Authentication required for non-register token types.",
+            },
+            500: {
+                description: "Unexpected server error while creating token.",
+            },
+        },
+    },
 };
 
 const paths = {};
@@ -71,6 +174,14 @@ for (const { file, prefix } of routeSources) {
 
         if (!paths[openApiPath][method]) {
             paths[openApiPath][method] = operationTemplate(method, openApiPath);
+        }
+
+        const overrideKey = `${method} ${openApiPath}`;
+        if (endpointOverrides[overrideKey]) {
+            paths[openApiPath][method] = {
+                ...paths[openApiPath][method],
+                ...endpointOverrides[overrideKey],
+            };
         }
     }
 }
