@@ -15,6 +15,7 @@ import type {
     IRegistrationPayload,
     IServer,
     IUser,
+    IUserRecord,
 } from "@vex-chat/types";
 import { EventEmitter } from "events";
 import { pbkdf2Sync } from "node:crypto";
@@ -111,7 +112,7 @@ export class Database extends EventEmitter {
         return preKey;
     }
 
-    public async retrieveUsers(): Promise<IUser[]> {
+    public async retrieveUsers(): Promise<IUserRecord[]> {
         return this.db.from("users").select();
     }
 
@@ -319,7 +320,9 @@ export class Database extends EventEmitter {
         return invite;
     }
 
-    public async retrieveGroupMembers(channelID: string): Promise<IUser[]> {
+    public async retrieveGroupMembers(
+        channelID: string,
+    ): Promise<IUserRecord[]> {
         const channel = await this.retrieveChannel(channelID);
         if (!channel) {
             return [];
@@ -329,7 +332,7 @@ export class Database extends EventEmitter {
             .select()
             .where({ resourceID: channel.serverID });
 
-        const groupMembers: IUser[] = [];
+        const groupMembers: IUserRecord[] = [];
         for (const permission of permissions) {
             const user = await this.retrieveUser(permission.userID);
             if (user) {
@@ -394,11 +397,13 @@ export class Database extends EventEmitter {
      *
      * @param resourceID
      */
-    public async retrieveAffectedUsers(resourceID: string): Promise<IUser[]> {
+    public async retrieveAffectedUsers(
+        resourceID: string,
+    ): Promise<IUserRecord[]> {
         const permissionList =
             await this.retrievePermissionsByResourceID(resourceID);
 
-        const users: IUser[] = [];
+        const users: IUserRecord[] = [];
         for (const permission of permissionList) {
             const user = await this.retrieveUser(permission.userID);
             if (user) {
@@ -522,12 +527,12 @@ export class Database extends EventEmitter {
     public async createUser(
         regKey: Uint8Array,
         regPayload: IRegistrationPayload,
-    ): Promise<[IUser | null, Error | null]> {
+    ): Promise<[IUserRecord | null, Error | null]> {
         try {
             const salt = xMakeNonce();
             const passwordHash = hashPassword(regPayload.password, salt);
 
-            const user: IUser = {
+            const user: IUserRecord = {
                 userID: uuid.stringify(regKey),
                 username: regPayload.username,
                 lastSeen: new Date(Date.now()),
@@ -557,8 +562,10 @@ export class Database extends EventEmitter {
     }
 
     // the identifier can be username, public key, or userID
-    public async retrieveUser(userIdentifier: string): Promise<IUser | null> {
-        let rows: IUser[] = [];
+    public async retrieveUser(
+        userIdentifier: string,
+    ): Promise<IUserRecord | null> {
+        let rows: IUserRecord[] = [];
         if (uuid.validate(userIdentifier)) {
             rows = await this.db
                 .from("users")
@@ -647,7 +654,7 @@ export class Database extends EventEmitter {
             .where({ nonce: XUtils.encodeHex(nonce), recipient: userID });
     }
 
-    public async markUserSeen(user: IUser): Promise<void> {
+    public async markUserSeen(user: IUserRecord): Promise<void> {
         await this.db("users")
             .where({ userID: user.userID })
             .update({
