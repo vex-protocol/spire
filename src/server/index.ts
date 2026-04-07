@@ -125,7 +125,7 @@ export const initApp = (
     const avatarRouter = getAvatarRouter(db, log);
     const inviteRouter = getInviteRouter(db, log, tokenValidator, notify);
 
-    // MIDDLEWARE (express-ws `Application` + TS 5.x breaks `use()` overload resolution)
+    // MIDDLEWARE — cast to `any` for overload resolution with raw/json parsers
     const apiAny = api as any;
     apiAny.use(express.json({ limit: "20mb" }));
     apiAny.use(
