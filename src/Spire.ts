@@ -515,7 +515,9 @@ export class Spire extends EventEmitter {
                 }, DEVICE_CHALLENGE_EXPIRY);
 
                 this.log.info("Device challenge issued for " + deviceID);
-                return res.json({ challengeID, challenge: nonce });
+                return res.send(
+                    msgpack.encode({ challengeID, challenge: nonce }),
+                );
             } catch (err) {
                 this.log.error("Device challenge error: " + err);
                 return res.sendStatus(500);
