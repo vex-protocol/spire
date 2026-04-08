@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 
 import type { IDevice, IEmoji, IPreKeysWS } from "@vex-chat/types";
 import { TokenScopes } from "@vex-chat/types";
-import cookieParser from "cookie-parser";
+// cookie-parser removed (ADR-008) — all auth via Authorization: Bearer header
 import cors from "cors";
 import express from "express";
 // express-ws removed — WS auth is post-connection (ADR-006)
@@ -49,14 +49,21 @@ interface IInvitePayload {
     duration: string;
 }
 
-const checkAuth = (req: any, res: any, next: () => void) => {
-    if (req.cookies.auth) {
-        try {
-            const result = jwt.verify(req.cookies.auth, getJwtSecret());
+/** Extract Bearer token from Authorization header. */
+function extractBearer(req: any): string | null {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith("Bearer ")) return null;
+    return header.slice(7);
+}
 
-            // lol glad this is a try/catch block
-            (req as any).user = (result as any).user;
-            (req as any).exp = (result as any).exp;
+const checkAuth = (req: any, res: any, next: () => void) => {
+    const token = extractBearer(req);
+    if (token) {
+        try {
+            const result = jwt.verify(token, getJwtSecret());
+            req.user = (result as any).user;
+            req.exp = (result as any).exp;
+            req.bearerToken = token;
         } catch (err) {
             console.warn(err.toString());
         }
@@ -65,11 +72,11 @@ const checkAuth = (req: any, res: any, next: () => void) => {
 };
 
 const checkDevice = (req: any, res: any, next: () => void) => {
-    if (req.cookies.device) {
+    const token = req.headers["x-device-token"];
+    if (token) {
         try {
-            const result = jwt.verify(req.cookies.device, getJwtSecret());
-            // lol glad this is a try/catch block
-            (req as any).device = (result as any).device;
+            const result = jwt.verify(token, getJwtSecret());
+            req.device = (result as any).device;
         } catch (err) {
             console.warn(err.toString());
         }
@@ -135,7 +142,7 @@ export const initApp = (
         }),
     );
     apiAny.use(helmet());
-    apiAny.use(cookieParser());
+    // cookieParser removed (ADR-008)
     apiAny.use(msgpackParser);
     apiAny.use(checkAuth);
     apiAny.use(checkDevice);
@@ -524,8 +531,7 @@ export const initApp = (
             });
             jwt.verify(token, getJwtSecret());
 
-            res.cookie("device", token, { path: "/" });
-            res.sendStatus(200);
+            res.send(msgpack.encode({ deviceToken: token }));
         } else {
             res.sendStatus(401);
         }

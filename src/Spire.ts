@@ -438,7 +438,7 @@ export class Spire extends EventEmitter {
                 msgpack.encode({
                     user: (req as any).user,
                     exp: (req as any).exp,
-                    token: req.cookies.auth,
+                    token: (req as any).bearerToken,
                 }),
             );
         });
@@ -482,7 +482,7 @@ export class Spire extends EventEmitter {
                 getJwtSecret(),
                 { expiresIn: -1 },
             );
-            res.cookie("auth", token, { path: "/" });
+            // Client discards its Bearer token on logout. No cookie to clear.
             res.sendStatus(200);
         });
 
@@ -597,8 +597,6 @@ export class Spire extends EventEmitter {
                     getJwtSecret(),
                     { expiresIn: DEVICE_AUTH_JWT_EXPIRY },
                 );
-                res.cookie("auth", token, { path: "/" });
-
                 this.log.info(
                     "Device-key auth succeeded for " +
                         user.username +
@@ -705,7 +703,6 @@ export class Spire extends EventEmitter {
                 // just to make sure
                 jwt.verify(token, getJwtSecret());
 
-                res.cookie("auth", token, { path: "/" });
                 res.send(
                     msgpack.encode({ user: censorUser(userEntry), token }),
                 );
