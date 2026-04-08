@@ -884,9 +884,7 @@ export class Database extends EventEmitter {
     }
 
     private async init(): Promise<void> {
-        // Custom migration provider that uses file:// URLs for dynamic import().
-        // FileMigrationProvider uses bare paths which break on Windows (D:\ is
-        // not a valid URL scheme for Node's ESM loader).
+        // pathToFileURL for Windows ESM compat
         const provider: MigrationProvider = {
             async getMigrations(): Promise<Record<string, Migration>> {
                 const files = await fs.readdir(migrationFolder);

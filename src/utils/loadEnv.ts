@@ -1,9 +1,6 @@
 import { config } from "dotenv";
 
-/* 
-  Populate process.env with vars from .env and verify required vars are present. 
-  Thanks Z for this function.
-*/
+/* Populate process.env with vars from .env and verify required vars are present. */
 export function loadEnv(): void {
     config();
     const requiredEnvVars: string[] = [

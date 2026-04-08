@@ -258,11 +258,7 @@ export class Spire extends EventEmitter {
             this.notify.bind(this),
         );
 
-        // Post-connection WS auth (ADR-006).
-        // Accept all upgrades unconditionally. Auth happens via the first
-        // message: { type: "auth", token: "<JWT>" }. This works on all
-        // platforms including React Native (which cannot send cookies on
-        // the HTTP upgrade request).
+        // WS auth: client sends { type: "auth", token } as first message
         this.wss.on("connection", (ws) => {
             this.log.info("WS connection established, waiting for auth...");
             const AUTH_TIMEOUT = 10_000;
@@ -482,13 +478,10 @@ export class Spire extends EventEmitter {
                 getJwtSecret(),
                 { expiresIn: -1 },
             );
-            // Client discards its Bearer token on logout. No cookie to clear.
             res.sendStatus(200);
         });
 
-        // ── Device-key challenge-response auth (ADR-007) ────────────
-        // Passwordless auto-login using the Ed25519 device key already
-        // stored in the OS keychain. No passwords, no JWTs persisted.
+        // ── Device-key auth ──────────────────────────────────────────
 
         this.api.post("/auth/device", async (req, res) => {
             try {
