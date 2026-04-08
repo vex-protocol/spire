@@ -14,7 +14,6 @@ import type {
     IPreKeysWS,
     IRegistrationPayload,
     IServer,
-    IUser,
     IUserRecord,
 } from "@vex-chat/types";
 import { EventEmitter } from "events";
@@ -32,8 +31,9 @@ import {
     type Migration,
     type MigrationProvider,
 } from "kysely";
-import * as uuid from "uuid";
-import winston from "winston";
+
+import { validate as uuidValidate, stringify as uuidStringify } from "uuid";
+import type winston from "winston";
 
 import type { ServerDatabase } from "./db/schema.ts";
 import type { ISpireOptions } from "./Spire.ts";
@@ -116,7 +116,7 @@ export class Database extends EventEmitter {
 
         this.log = createLogger("spire-db", options?.logLevel || "error");
 
-        const dbType = options?.dbType || "mysql";
+        const dbType = options?.dbType || "sqlite3";
 
         let filename: string;
         switch (dbType) {
@@ -127,10 +127,7 @@ export class Database extends EventEmitter {
             case "sqlite3mem":
                 filename = ":memory:";
                 break;
-            case "mysql":
             default:
-                // For now, fall through to SQLite for mysql too.
-                // MySQL dialect can be wired up later with MysqlDialect + mysql2 createPool.
                 filename = "spire.sqlite";
                 break;
         }
@@ -157,12 +154,12 @@ export class Database extends EventEmitter {
     ): Promise<void> {
         for (const otk of otks) {
             const newOTK: IPreKeysSQL = {
-                keyID: uuid.v4(),
+                keyID: crypto.randomUUID(),
                 userID,
                 deviceID: otk.deviceID,
                 publicKey: XUtils.encodeHex(otk.publicKey),
                 signature: XUtils.encodeHex(otk.signature),
-                index: otk.index!,
+                index: otk.index,
             };
             await this.db.insertInto("oneTimeKeys").values(newOTK).execute();
         }
@@ -217,7 +214,7 @@ export class Database extends EventEmitter {
         const device = {
             owner,
             signKey: payload.signKey,
-            deviceID: uuid.v4(),
+            deviceID: crypto.randomUUID(),
             name: payload.deviceName,
             lastLogin: new Date(Date.now()).toString(),
             deleted: 0,
@@ -226,7 +223,7 @@ export class Database extends EventEmitter {
         await this.db.insertInto("devices").values(device).execute();
 
         const medPreKeys: IPreKeysSQL = {
-            keyID: uuid.v4(),
+            keyID: crypto.randomUUID(),
             userID: owner,
             deviceID: device.deviceID,
             publicKey: payload.preKey,
@@ -258,7 +255,7 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveDevice(deviceID: string): Promise<IDevice | null> {
-        if (uuid.validate(deviceID)) {
+        if (uuidValidate(deviceID)) {
             const rows = await this.db
                 .selectFrom("devices")
                 .selectAll()
@@ -345,7 +342,7 @@ export class Database extends EventEmitter {
         resourceID: string,
         powerLevel: number,
     ): Promise<IPermission> {
-        const permissionID = uuid.v4();
+        const permissionID = crypto.randomUUID();
 
         // check if it already exists
         const checkPermission = await this.db
@@ -478,7 +475,7 @@ export class Database extends EventEmitter {
         serverID: string,
     ): Promise<IChannel> {
         const channel: IChannel = {
-            channelID: uuid.v4(),
+            channelID: crypto.randomUUID(),
             serverID,
             name,
         };
@@ -490,7 +487,7 @@ export class Database extends EventEmitter {
         // create the server
         const server: IServer = {
             name,
-            serverID: uuid.v4(),
+            serverID: crypto.randomUUID(),
         };
         await this.db
             .insertInto("servers")
@@ -683,7 +680,7 @@ export class Database extends EventEmitter {
             const passwordHash = hashPassword(regPayload.password, salt);
 
             const user: IUserRecord = {
-                userID: uuid.stringify(regKey),
+                userID: uuidStringify(regKey),
                 username: regPayload.username,
                 lastSeen: new Date(Date.now()),
                 passwordHash: passwordHash.toString("hex"),
@@ -726,7 +723,7 @@ export class Database extends EventEmitter {
         userIdentifier: string,
     ): Promise<IUserRecord | null> {
         let rows;
-        if (uuid.validate(userIdentifier)) {
+        if (uuidValidate(userIdentifier)) {
             rows = await this.db
                 .selectFrom("users")
                 .selectAll()

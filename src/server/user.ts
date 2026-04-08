@@ -4,11 +4,11 @@ import { TokenScopes } from "@vex-chat/types";
 import express from "express";
 import nacl from "tweetnacl";
 import { stringify } from "uuid";
-import winston from "winston";
+import type winston from "winston";
 import { protect } from "./index.ts";
 
 import { msgpack } from "../utils/msgpack.ts";
-import { Database } from "../Database.ts";
+import type { Database } from "../Database.ts";
 import type { IUser } from "@vex-chat/types";
 import { censorUser } from "./utils.ts";
 

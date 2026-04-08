@@ -7,9 +7,12 @@
     "author": "Extra <extrahash@protonmail.com>",
     "license": "AGPL-3.0-or-later",
     "engines": {
-        "node": ">=24.0.0"
+        "node": ">=24.0.0",
+        "npm": ">=10.0.0"
     },
+    "packageManager": "npm@10.9.2",
     "scripts": {
+        "preinstall": "npx only-allow npm",
         "start": "node src/run.ts",
         "start:built": "node ./dist/run.js",
         "restart": "pm2 restart spire && pm2 logs spire",
@@ -22,6 +25,7 @@
         "test": "vitest run",
         "gen-spk": "node scripts/gen-spk.js",
         "docs": "node ./scripts/generate-docs.js",
+        "license:check": "npx @onebeyond/license-checker scan --allowOnly MIT ISC BSD-2-Clause BSD-3-Clause Apache-2.0 0BSD MPL-2.0 CC0-1.0 CC-BY-4.0 Unlicense BlueOak-1.0.0 Python-2.0 Zlib PSF-2.0 Artistic-2.0 AGPL-3.0-or-later WTFPL --ignoreRootPackageLicense --disableReport",
         "service:status-monitor": "node ./services/status-monitor/index.js",
         "service:status-monitor:clear-history": "node ./services/status-monitor/clear-history.js",
         "service:deploy-hook": "node ./services/deploy-hook/index.js",
@@ -30,16 +34,14 @@
     "devDependencies": {
         "@types/better-sqlite3": "^7.6.0",
         "@types/cors": "^2.8.17",
-        "@types/express": "^4.17.21",
+        "@types/express": "^5.0.0",
         "@types/jsonwebtoken": "^9.0.0",
         "@types/morgan": "^1.9.9",
-        "@types/multer": "^1.4.12",
+        "@types/multer": "^2.0.0",
         "@types/node": "^24.12.2",
         "@types/swagger-ui-express": "^4.1.8",
         "@types/uuid": "^10.0.0",
         "@types/ws": "^8.5.10",
-        "@typescript-eslint/eslint-plugin": "^8.57.1",
-        "@typescript-eslint/parser": "^8.57.1",
         "@vex-chat/crypto": "^1.1.1",
         "@vex-chat/types": "^1.0.1",
         "eslint": "^10.1.0",
@@ -47,8 +49,10 @@
         "husky": "^9.1.7",
         "lint-staged": "^16.3.2",
         "prettier": "^3.2.0",
+        "type-coverage": "^2.29.7",
         "typedoc": "^0.28.18",
         "typescript": "^6.0.2",
+        "typescript-eslint": "^8.32.1",
         "vitest": "^3.0.0"
     },
     "lint-staged": {
@@ -58,27 +62,23 @@
         ]
     },
     "overrides": {
-        "@types/express": "^4.17.21",
-        "@types/express-serve-static-core": "^4.17.41",
         "@types/ws": "^8.5.10",
         "@types/readable-stream": "4.0.11"
     },
     "dependencies": {
-        "@extrahash/sleep": "^1.0.0",
         "better-sqlite3": "^11.0.0",
-        "chalk": "^4.1.0",
         "cors": "^2.8.5",
         "dotenv": "^17.0.0",
-        "express": "^4.17.1",
+        "express": "^5.1.0",
         "file-type": "^22.0.0",
-        "helmet": "^4.2.0",
+        "helmet": "^8.1.0",
         "jsonwebtoken": "^9.0.2",
         "kysely": "^0.28.15",
         "morgan": "^1.10.0",
         "msgpackr": "1.11.8",
         "multer": "^2.0.0",
-        "mysql": "^2.18.1",
         "parse-duration": "^2.0.0",
+        "picocolors": "^1.1.1",
         "swagger-ui-express": "^5.0.1",
         "tweetnacl": "^1.0.3",
         "uuid": "^8.3.1",

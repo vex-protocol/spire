@@ -6,12 +6,11 @@ import { XUtils } from "@vex-chat/crypto";
 import type { IDevice, IFilePayload, IFileSQL } from "@vex-chat/types";
 import express from "express";
 import multer from "multer";
-import { v4 } from "uuid";
-import winston from "winston";
+import type winston from "winston";
 
 import { msgpack } from "../utils/msgpack.ts";
 import { protect } from "./index.ts";
-import { Database } from "../Database.ts";
+import type { Database } from "../Database.ts";
 
 export const getFileRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();
@@ -74,7 +73,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
         const buf = Buffer.from(XUtils.decodeBase64(payload.file));
 
         const newFile: IFileSQL = {
-            fileID: v4(),
+            fileID: crypto.randomUUID(),
             owner: payload.owner,
             nonce: payload.nonce,
         };
@@ -106,7 +105,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
         }
 
         const newFile: IFileSQL = {
-            fileID: v4(),
+            fileID: crypto.randomUUID(),
             owner: payload.owner,
             nonce: payload.nonce,
         };

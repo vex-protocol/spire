@@ -62,7 +62,7 @@ const collectFromStack = (
         if (layer?.route?.path && layer?.route?.methods) {
             const routePath = layer.route.path as string;
             const openApiPath = normalizePath(prefix, routePath);
-            const methods = Object.keys(layer.route.methods) as string[];
+            const methods = Object.keys(layer.route.methods);
             for (const method of methods) {
                 addOperation(paths, method, openApiPath);
             }

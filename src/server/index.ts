@@ -7,9 +7,9 @@ import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
 import parseDuration from "parse-duration";
-import winston from "winston";
+import type winston from "winston";
 
-import { Database } from "../Database.ts";
+import type { Database } from "../Database.ts";
 
 import { XUtils } from "@vex-chat/crypto";
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
@@ -17,13 +17,13 @@ import jwt from "jsonwebtoken";
 import { msgpack } from "../utils/msgpack.ts";
 import multer from "multer";
 import nacl from "tweetnacl";
+import { stringify as uuidStringify } from "uuid";
 import { getAvatarRouter } from "./avatar.ts";
 import { getFileRouter } from "./file.ts";
 import { getInviteRouter } from "./invite.ts";
 import { setupOpenApiDocs } from "./openapi.ts";
 import { getUserRouter } from "./user.ts";
 
-import * as uuid from "uuid";
 import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
 import { getJwtSecret } from "../utils/jwtSecret.ts";
@@ -94,7 +94,7 @@ export const msgpackParser = (req: any, res: any, next: () => void) => {
     if (req.is("application/msgpack")) {
         try {
             req.body = msgpack.decode(req.body);
-        } catch (err) {
+        } catch {
             res.sendStatus(400);
             return;
         }
@@ -209,7 +209,7 @@ export const initApp = (
         const expires = new Date(Date.now() + duration);
 
         const invite = await db.createInvite(
-            uuid.v4(),
+            crypto.randomUUID(),
             serverEntry.serverID,
             userDetails.userID,
             expires.toString(),
@@ -284,7 +284,12 @@ export const initApp = (
                 const affectedUsers = await db.retrieveAffectedUsers(serverID);
                 // tell everyone about server change
                 for (const user of affectedUsers) {
-                    notify(user.userID, "serverChange", uuid.v4(), serverID);
+                    notify(
+                        user.userID,
+                        "serverChange",
+                        crypto.randomUUID(),
+                        serverID,
+                    );
                 }
                 return;
             }
@@ -358,14 +363,11 @@ export const initApp = (
             userDetails.userID,
             "server",
         );
-        let found = false;
         for (const permission of permissions) {
             if (
                 permission.resourceID === channel.serverID &&
                 permission.powerLevel > 50
             ) {
-                found = true;
-                // msg.data is the channelID
                 await db.deleteChannel(channelID);
 
                 res.sendStatus(200);
@@ -378,7 +380,7 @@ export const initApp = (
                     notify(
                         user.userID,
                         "serverChange",
-                        uuid.v4(),
+                        crypto.randomUUID(),
                         channel.serverID,
                     );
                 }
@@ -490,7 +492,7 @@ export const initApp = (
             } else {
                 res.sendStatus(404);
             }
-        } catch (err) {
+        } catch {
             res.sendStatus(500);
         }
     });
@@ -520,7 +522,7 @@ export const initApp = (
         const regKey = nacl.sign.open(signed, XUtils.decodeHex(device.signKey));
         if (
             regKey &&
-            tokenValidator(uuid.stringify(regKey), TokenScopes.Connect)
+            tokenValidator(uuidStringify(regKey), TokenScopes.Connect)
         ) {
             const token = jwt.sign({ device }, getJwtSecret(), {
                 expiresIn: JWT_EXPIRY,
@@ -669,7 +671,7 @@ export const initApp = (
         }
 
         const emoji: IEmoji = {
-            emojiID: uuid.v4(),
+            emojiID: crypto.randomUUID(),
             owner: req.params.serverID,
             name: payload.name,
         };
@@ -694,7 +696,12 @@ export const initApp = (
         multer().single("emoji"),
         async (req, res) => {
             const payload: IEmojiPayload = req.body;
-            const serverEntry = await db.retrieveServer(req.params.serverID);
+            const serverID = req.params.serverID;
+            if (typeof serverID !== "string") {
+                res.sendStatus(400);
+                return;
+            }
+            const serverEntry = await db.retrieveServer(serverID);
             const userDetails: IUser = (req as any).user;
             const deviceDetails: IDevice | undefined = (req as any).device;
             if (!deviceDetails) {
@@ -702,9 +709,8 @@ export const initApp = (
                 return;
             }
 
-            const permissionList = await db.retrievePermissionsByResourceID(
-                req.params.serverID,
-            );
+            const permissionList =
+                await db.retrievePermissionsByResourceID(serverID);
             let hasPermission = false;
             for (const permission of permissionList) {
                 if (
@@ -751,8 +757,8 @@ export const initApp = (
             }
 
             const emoji: IEmoji = {
-                emojiID: uuid.v4(),
-                owner: req.params.serverID,
+                emojiID: crypto.randomUUID(),
+                owner: serverID,
                 name: payload.name,
             };
 

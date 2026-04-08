@@ -1,11 +1,11 @@
-import { TokenScopes } from "@vex-chat/types";
+import type { TokenScopes } from "@vex-chat/types";
 import express from "express";
-import * as uuid from "uuid";
-import winston from "winston";
+
+import type winston from "winston";
 
 import { msgpack } from "../utils/msgpack.ts";
-import { POWER_LEVELS } from "../ClientManager.ts";
-import { Database } from "../Database.ts";
+
+import type { Database } from "../Database.ts";
 import { protect } from "./index.ts";
 import type { IUser } from "@vex-chat/types";
 
@@ -43,7 +43,12 @@ export const getInviteRouter = (
             0,
         );
         res.send(msgpack.encode(permission));
-        notify(userDetails.userID, "permission", uuid.v4(), permission);
+        notify(
+            userDetails.userID,
+            "permission",
+            crypto.randomUUID(),
+            permission,
+        );
     });
 
     router.get("/:inviteID", protect, async (req, res) => {

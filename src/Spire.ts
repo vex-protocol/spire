@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
-import { Server } from "http";
+import type { Server } from "http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,8 +19,8 @@ import { EventEmitter } from "events";
 import express from "express";
 
 import nacl from "tweetnacl";
-import * as uuid from "uuid";
-import winston from "winston";
+import { stringify as uuidStringify } from "uuid";
+import type winston from "winston";
 import { WebSocketServer } from "ws";
 
 import jwt from "jsonwebtoken";
@@ -193,7 +193,7 @@ export class Spire extends EventEmitter {
 
     private createActionToken(scope: TokenScopes): IActionToken {
         const token: IActionToken = {
-            key: uuid.v4(),
+            key: crypto.randomUUID(),
             time: new Date(Date.now()),
             scope,
         };
@@ -329,7 +329,7 @@ export class Spire extends EventEmitter {
                     this.log.warn("WS auth failed: " + err);
                     const errMsg: IBaseMsg = {
                         type: "unauthorized",
-                        transmissionID: uuid.v4(),
+                        transmissionID: crypto.randomUUID(),
                     };
                     ws.send(XUtils.packMessage(errMsg));
                     ws.close();
@@ -502,7 +502,7 @@ export class Spire extends EventEmitter {
 
                 // Generate challenge nonce (32 bytes)
                 const nonce = XUtils.encodeHex(nacl.randomBytes(32));
-                const challengeID = uuid.v4();
+                const challengeID = crypto.randomUUID();
                 this.deviceChallenges.set(challengeID, {
                     deviceID,
                     nonce,
@@ -641,7 +641,7 @@ export class Spire extends EventEmitter {
                 this.notify(
                     recipientDeviceDetails.owner,
                     "mail",
-                    uuid.v4(),
+                    crypto.randomUUID(),
                     null,
                     mail.recipient,
                 );
@@ -725,7 +725,7 @@ export class Spire extends EventEmitter {
                 if (
                     regKey &&
                     this.validateToken(
-                        uuid.stringify(regKey),
+                        uuidStringify(regKey),
                         TokenScopes.Register,
                     )
                 ) {

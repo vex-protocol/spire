@@ -8,6 +8,9 @@ on:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
+permissions:
+    contents: read
+
 jobs:
     build:
         name: Build (${{ matrix.os }})
@@ -19,20 +22,43 @@ jobs:
                     - ubuntu-latest
                     - macos-latest
                     - windows-latest
+        env:
+            npm_config_save_exact: "true"
+            npm_config_engine_strict: "true"
         steps:
-            - uses: actions/checkout@v6
+            - name: Harden Runner
+              uses: step-security/harden-runner@v2
+              with:
+                  egress-policy: audit
+
+            - uses: actions/checkout@v4
 
             - name: Install mise
               uses: jdx/mise-action@v3.5.1
 
             - name: Install dependencies
-              run: npm ci
+              run: npm ci --ignore-scripts
 
             - name: Build
               run: npm run build
 
+            - name: Lint
+              run: npm run lint
+
             - name: Test
               run: npm test
+
+            - name: Type Coverage
+              run: npx type-coverage --at-least 95 --ignore-catch
+
+            - name: Lint package.json
+              run: npx npm-package-json-lint .
+
+            - name: Check dependency licenses
+              run: npm run license:check
+
+            - name: Security audit
+              run: npm audit --audit-level=high || true
 
     deploy-hook:
         name: Trigger deploy hook
@@ -40,58 +66,20 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         runs-on: ubuntu-latest
         steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@v2
+              with:
+                  egress-policy: audit
             - name: POST deploy endpoint
               env:
                   DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
                   DEPLOY_HOOK_SECRET: ${{ secrets.DEPLOY_HOOK_SECRET }}
               run: |
                   if [ -z "$DEPLOY_HOOK_URL" ] || [ -z "$DEPLOY_HOOK_SECRET" ]; then
-                    echo "DEPLOY_HOOK_URL and/or DEPLOY_HOOK_SECRET not set; skipping deploy hook."
+                    echo "Deploy hook not configured; skipping."
                     exit 0
                   fi
-
-                  tmp="$(mktemp)"
-                  trap 'rm -f "$tmp"' EXIT
-                  http_code="$(curl -sS -X POST "$DEPLOY_HOOK_URL" \
+                  curl -sS -X POST "$DEPLOY_HOOK_URL" \
                     -H "Authorization: Bearer ${DEPLOY_HOOK_SECRET}" \
                     -H "Content-Type: application/json" \
-                    --data '{}' \
-                    -o "$tmp" -w '%{http_code}')"
-                  resp="$(cat "$tmp")"
-
-                  if echo "$resp" | jq -e '(.stepLogs | type) == "array"' >/dev/null 2>&1; then
-                    echo "$resp" | jq -r '
-                      (if .ok == false then "\n!!! " + (.error | tostring) + " !!!\n" else "" end)
-                      + (
-                        [.stepLogs[]?
-                          | "\n────────────────────────────────────────\n" + .command + "\n────────────────────────────────────────\n"
-                            + (
-                                (.stdout // "")
-                                | if length == 0 then ""
-                                  elif endswith("\n") then .
-                                  else . + "\n"
-                                  end
-                              )
-                            + (
-                                (.stderr // "")
-                                | if length == 0 then ""
-                                  elif endswith("\n") then .
-                                  else . + "\n"
-                                  end
-                              )
-                        ] | join("")
-                      )
-                      + "\n"
-                    '
-                  else
-                    echo "$resp"
-                  fi
-
-                  outcome="$(echo "$resp" | jq -r '.outcome // "missing"' 2>/dev/null || echo invalid)"
-                  if [ "$http_code" = "200" ] && echo "$resp" | jq -e '.outcome == "success" and .ok == true' >/dev/null 2>&1; then
-                    echo "Deploy hook: OK (HTTP $http_code, outcome=$outcome)"
-                    exit 0
-                  fi
-
-                  echo "::error::Deploy hook failed (HTTP $http_code, outcome=$outcome)"
-                  exit 1
+                    --data '{}' --fail

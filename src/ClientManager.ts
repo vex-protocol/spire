@@ -1,4 +1,4 @@
-import { sleep } from "@extrahash/sleep";
+import { setTimeout as sleep } from "node:timers/promises";
 import { xConcat, XUtils } from "@vex-chat/crypto";
 import type {
     IBaseMsg,
@@ -14,19 +14,15 @@ import type {
     IUserRecord,
 } from "@vex-chat/types";
 import { SocketAuthErrors } from "@vex-chat/types";
-import chalk from "chalk";
+import pc from "picocolors";
 import { EventEmitter } from "events";
 import { msgpack } from "./utils/msgpack.ts";
 import nacl from "tweetnacl";
-import {
-    parse as uuidParse,
-    v4 as uuidv4,
-    validate as uuidValidate,
-} from "uuid";
-import winston from "winston";
-import WebSocket from "ws";
+import { parse as uuidParse, validate as uuidValidate } from "uuid";
+import type winston from "winston";
+import type WebSocket from "ws";
 
-import { Database } from "./Database.ts";
+import type { Database } from "./Database.ts";
 import { TOKEN_EXPIRY, type ISpireOptions } from "./Spire.ts";
 import { createLogger } from "./utils/createLogger.ts";
 import { createUint8UUID } from "./utils/createUint8UUID.ts";
@@ -114,23 +110,23 @@ export class ClientManager extends EventEmitter {
 
     public async send(msg: any, header?: Uint8Array) {
         if (header) {
-            this.log.debug(chalk.red.bold("OUTH"), header.toString());
+            this.log.debug(pc.bold(pc.red("OUTH")), header.toString());
         } else {
-            this.log.debug(chalk.red.bold("OUTH"), emptyHeader.toString());
+            this.log.debug(pc.bold(pc.red("OUTH")), emptyHeader.toString());
         }
 
         const packedMessage = packMessage(msg, header);
 
         this.log.info(
-            chalk.bold("⟶   ") +
+            pc.bold("⟶   ") +
                 responseColor(msg.type.toUpperCase()) +
                 " " +
                 this.toString() +
                 " " +
-                chalk.yellow(Buffer.byteLength(packedMessage)),
+                pc.yellow(Buffer.byteLength(packedMessage)),
         );
 
-        this.log.debug(chalk.red.bold("OUT"), msg);
+        this.log.debug(pc.bold(pc.red("OUT")), msg);
         try {
             this.conn.send(packedMessage);
         } catch (err) {
@@ -179,7 +175,7 @@ export class ClientManager extends EventEmitter {
             return;
         }
         this.setAlive(false);
-        const p = { transmissionID: uuidv4(), type: "ping" };
+        const p = { transmissionID: crypto.randomUUID(), type: "ping" };
         this.send(p);
     }
 
@@ -215,12 +211,7 @@ export class ClientManager extends EventEmitter {
                 return;
             }
 
-            if (
-                XUtils.bytesEqual(
-                    this.challengeID as Uint8Array,
-                    message as Uint8Array,
-                )
-            ) {
+            if (XUtils.bytesEqual(this.challengeID, message)) {
                 this.user = user;
                 this.authorize(msg.transmissionID);
             } else {
@@ -236,9 +227,9 @@ export class ClientManager extends EventEmitter {
     }
 
     private challenge() {
-        this.challengeID = new Uint8Array(uuidParse(uuidv4()));
+        this.challengeID = new Uint8Array(uuidParse(crypto.randomUUID()));
         const challenge: IChallMsg = {
-            transmissionID: uuidv4(),
+            transmissionID: crypto.randomUUID(),
             type: "challenge",
             challenge: this.challengeID,
         };
@@ -357,23 +348,23 @@ export class ClientManager extends EventEmitter {
             }
 
             this.log.info(
-                chalk.bold("⟵   ") +
+                pc.bold("⟵   ") +
                     (msg.type === "resource"
                         ? crudColor(
                               (msg as IResourceMsg).action.toUpperCase(),
                           ) +
                           " " +
-                          chalk.bold(
+                          pc.bold(
                               (msg as IResourceMsg).resourceType.toUpperCase(),
                           )
-                        : chalk.bold(msg.type.toUpperCase())) +
+                        : pc.bold(msg.type.toUpperCase())) +
                     " " +
                     this.toString() +
                     " " +
-                    chalk.yellow(size),
+                    pc.yellow(size),
             );
-            this.log.debug(chalk.red.bold("INH"), header.toString());
-            this.log.debug(chalk.red.bold("IN"), msg);
+            this.log.debug(pc.bold(pc.red("INH")), header.toString());
+            this.log.debug(pc.bold(pc.red("IN")), msg);
 
             if (!msg.type) {
                 this.sendErr(msg.transmissionID, "Message type is required.");
@@ -382,7 +373,7 @@ export class ClientManager extends EventEmitter {
 
             if (!uuidValidate(msg.transmissionID)) {
                 this.sendErr(
-                    uuidv4(),
+                    crypto.randomUUID(),
                     "transmissionID is required and must be a valid uuid.",
                 );
                 return;
@@ -422,13 +413,13 @@ export class ClientManager extends EventEmitter {
 const crudColor = (action: string): string => {
     switch (action) {
         case "CREATE":
-            return chalk.yellow.bold(action);
+            return pc.bold(pc.yellow(action));
         case "RETRIEVE":
-            return chalk.yellow.bold(action);
+            return pc.bold(pc.yellow(action));
         case "UPDATE":
-            return chalk.cyan.bold(action);
+            return pc.bold(pc.cyan(action));
         case "DELETE":
-            return chalk.red.bold(action);
+            return pc.bold(pc.red(action));
         default:
             return action;
     }
@@ -437,9 +428,9 @@ const crudColor = (action: string): string => {
 const responseColor = (status: string): string => {
     switch (status) {
         case "SUCCESS":
-            return chalk.green.bold(status);
+            return pc.bold(pc.green(status));
         case "ERROR":
-            return chalk.red.bold(status);
+            return pc.bold(pc.red(status));
         default:
             return status;
     }
