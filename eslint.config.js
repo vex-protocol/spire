@@ -1,5 +1,8 @@
+import vitest from "@vitest/eslint-plugin";
+import n from "eslint-plugin-n";
+import perfectionist from "eslint-plugin-perfectionist";
 import tseslint from "typescript-eslint";
-import eslintConfigPrettier from "eslint-config-prettier";
+import eslintConfigPrettier from "eslint-config-prettier/flat";
 
 export default tseslint.config(
     // Start with recommended-type-checked (not strict) for spire.
@@ -7,6 +10,8 @@ export default tseslint.config(
     // msgpack decoding. These will be fixed when Zod validation is
     // added to routes (beads-at4 phase 5). Upgrade to strictTypeChecked then.
     ...tseslint.configs.recommendedTypeChecked,
+    n.configs["flat/recommended"],
+    perfectionist.configs["recommended-natural"],
     {
         languageOptions: {
             parserOptions: {
@@ -41,6 +46,22 @@ export default tseslint.config(
             ],
             "@typescript-eslint/consistent-type-exports": "error",
             "@typescript-eslint/no-import-type-side-effects": "error",
+
+            "n/no-missing-import": "off",
+            "n/no-unpublished-import": "off",
+            "n/no-process-exit": "off",
+        },
+    },
+    {
+        files: ["src/__tests__/**/*.ts"],
+        plugins: { vitest },
+        rules: {
+            ...vitest.configs.recommended.rules,
+            "@typescript-eslint/no-explicit-any": "off",
+            "@typescript-eslint/no-unsafe-assignment": "off",
+            "@typescript-eslint/no-unsafe-member-access": "off",
+            "@typescript-eslint/no-unsafe-call": "off",
+            "@typescript-eslint/no-unsafe-argument": "off",
         },
     },
     eslintConfigPrettier,
