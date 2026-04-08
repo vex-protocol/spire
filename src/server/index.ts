@@ -2,11 +2,8 @@ import * as fs from "node:fs";
 
 import type { IDevice, IEmoji, IPreKeysWS } from "@vex-chat/types";
 import { TokenScopes } from "@vex-chat/types";
-import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import expressWs from "express-ws";
-
 import helmet from "helmet";
 import morgan from "morgan";
 import parseDuration from "parse-duration";
@@ -29,6 +26,7 @@ import { getUserRouter } from "./user.ts";
 import * as uuid from "uuid";
 import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
+import { getJwtSecret } from "../utils/jwtSecret.ts";
 import type { IUser } from "@vex-chat/types";
 import { censorUser } from "./utils.ts";
 
@@ -48,14 +46,21 @@ interface IInvitePayload {
     duration: string;
 }
 
-const checkAuth = (req: any, res: any, next: () => void) => {
-    if (req.cookies.auth) {
-        try {
-            const result = jwt.verify(req.cookies.auth, process.env.SPK!);
+/** Extract Bearer token from Authorization header. */
+function extractBearer(req: any): string | null {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith("Bearer ")) return null;
+    return header.slice(7);
+}
 
-            // lol glad this is a try/catch block
-            (req as any).user = (result as any).user;
-            (req as any).exp = (result as any).exp;
+const checkAuth = (req: any, res: any, next: () => void) => {
+    const token = extractBearer(req);
+    if (token) {
+        try {
+            const result = jwt.verify(token, getJwtSecret());
+            req.user = (result as any).user;
+            req.exp = (result as any).exp;
+            req.bearerToken = token;
         } catch (err) {
             console.warn(err.toString());
         }
@@ -64,11 +69,11 @@ const checkAuth = (req: any, res: any, next: () => void) => {
 };
 
 const checkDevice = (req: any, res: any, next: () => void) => {
-    if (req.cookies.device) {
+    const token = req.headers["x-device-token"];
+    if (token) {
         try {
-            const result = jwt.verify(req.cookies.device, process.env.SPK!);
-            // lol glad this is a try/catch block
-            (req as any).device = (result as any).device;
+            const result = jwt.verify(token, getJwtSecret());
+            req.device = (result as any).device;
         } catch (err) {
             console.warn(err.toString());
         }
@@ -105,7 +110,7 @@ for (const dir of directories) {
 }
 
 export const initApp = (
-    api: expressWs.Application,
+    api: express.Application,
     db: Database,
     log: winston.Logger,
     tokenValidator: (key: string, scope: TokenScopes) => boolean,
@@ -124,7 +129,7 @@ export const initApp = (
     const avatarRouter = getAvatarRouter(db, log);
     const inviteRouter = getInviteRouter(db, log, tokenValidator, notify);
 
-    // MIDDLEWARE (express-ws `Application` + TS 5.x breaks `use()` overload resolution)
+    // MIDDLEWARE — cast to `any` for overload resolution with raw/json parsers
     const apiAny = api as any;
     apiAny.use(express.json({ limit: "20mb" }));
     apiAny.use(
@@ -134,7 +139,6 @@ export const initApp = (
         }),
     );
     apiAny.use(helmet());
-    apiAny.use(cookieParser());
     apiAny.use(msgpackParser);
     apiAny.use(checkAuth);
     apiAny.use(checkDevice);
@@ -518,13 +522,12 @@ export const initApp = (
             regKey &&
             tokenValidator(uuid.stringify(regKey), TokenScopes.Connect)
         ) {
-            const token = jwt.sign({ device }, process.env.SPK!, {
+            const token = jwt.sign({ device }, getJwtSecret(), {
                 expiresIn: JWT_EXPIRY,
             });
-            jwt.verify(token, process.env.SPK!);
+            jwt.verify(token, getJwtSecret());
 
-            res.cookie("device", token, { path: "/" });
-            res.sendStatus(200);
+            res.send(msgpack.encode({ deviceToken: token }));
         } else {
             res.sendStatus(401);
         }

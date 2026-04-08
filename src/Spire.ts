@@ -17,7 +17,6 @@ import type {
 import { TokenScopes } from "@vex-chat/types";
 import { EventEmitter } from "events";
 import express from "express";
-import expressWs from "express-ws";
 
 import nacl from "tweetnacl";
 import * as uuid from "uuid";
@@ -31,10 +30,13 @@ import { Database, hashPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
 import { censorUser } from "./server/utils.ts";
 import { createLogger } from "./utils/createLogger.ts";
+import { getJwtSecret } from "./utils/jwtSecret.ts";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
 export const JWT_EXPIRY = "7d";
+export const DEVICE_AUTH_JWT_EXPIRY = "1h";
+const DEVICE_CHALLENGE_EXPIRY = 1000 * 60; // 60 seconds
 const STATUS_LATENCY_BUDGET_MS = 250;
 
 // 3-19 chars long
@@ -103,13 +105,16 @@ export class Spire extends EventEmitter {
     private queuedRequestIncrements = 0;
     private dbReady = false;
 
-    private expWs: expressWs.Instance = expressWs(express());
-    private api = this.expWs.app;
-    private wss: WebSocketServer = this.expWs.getWss();
+    private api = express();
+    private wss: WebSocketServer = new WebSocketServer({ noServer: true });
 
     private signKeys: nacl.SignKeyPair;
 
     private actionTokens: IActionToken[] = [];
+    private deviceChallenges = new Map<
+        string,
+        { deviceID: string; nonce: string; time: number }
+    >();
 
     private log: winston.Logger;
     private server: Server | null = null;
@@ -253,51 +258,86 @@ export class Spire extends EventEmitter {
             this.notify.bind(this),
         );
 
-        // All the app logic strongly coupled to spire class :/
-        this.api.ws("/socket", (ws, req) => {
-            const userDetails: IUser = (req as any).user;
-            if (!userDetails) {
-                this.log.warn("User attempted to open socket with no jwt.");
-                const err: IBaseMsg = {
-                    type: "unauthorized",
-                    transmissionID: uuid.v4(),
-                };
-                const msg = XUtils.packMessage(err);
-                ws.send(msg);
+        // WS auth: client sends { type: "auth", token } as first message
+        this.wss.on("connection", (ws) => {
+            this.log.info("WS connection established, waiting for auth...");
+            const AUTH_TIMEOUT = 10_000;
+
+            const timer = setTimeout(() => {
+                this.log.warn("WS auth timeout — closing.");
                 ws.close();
-                return;
-            }
+            }, AUTH_TIMEOUT);
 
-            this.log.info("New client initiated.");
-            this.log.info(JSON.stringify(userDetails));
+            const onFirstMessage = (data: Buffer | ArrayBuffer | Buffer[]) => {
+                const str = Buffer.isBuffer(data)
+                    ? data.toString()
+                    : Buffer.from(data as ArrayBuffer).toString();
+                clearTimeout(timer);
+                ws.off("message", onFirstMessage);
 
-            const client = new ClientManager(
-                ws,
-                this.db,
-                this.notify.bind(this),
-                userDetails,
-                this.options,
-            );
+                try {
+                    const parsed = JSON.parse(str);
+                    if (parsed.type !== "auth" || !parsed.token) {
+                        throw new Error(
+                            "Expected { type: 'auth', token }, got type=" +
+                                parsed.type,
+                        );
+                    }
+                    const result = jwt.verify(parsed.token, getJwtSecret());
+                    const userDetails: IUser = (result as any).user;
 
-            client.on("fail", () => {
-                this.log.info(
-                    "Client connection is down, removing: " + client.toString(),
-                );
-                if (this.clients.includes(client)) {
-                    this.clients.splice(this.clients.indexOf(client), 1);
+                    this.log.info(
+                        "WS auth succeeded for " + userDetails.username,
+                    );
+
+                    const client = new ClientManager(
+                        ws,
+                        this.db,
+                        this.notify.bind(this),
+                        userDetails,
+                        this.options,
+                    );
+
+                    client.on("fail", () => {
+                        this.log.info(
+                            "Client connection is down, removing: " +
+                                client.toString(),
+                        );
+                        if (this.clients.includes(client)) {
+                            this.clients.splice(
+                                this.clients.indexOf(client),
+                                1,
+                            );
+                        }
+                        this.log.info(
+                            "Current authorized clients: " +
+                                this.clients.length,
+                        );
+                    });
+
+                    client.on("authed", () => {
+                        this.log.info(
+                            "New client authorized: " + client.toString(),
+                        );
+                        this.clients.push(client);
+                        this.log.info(
+                            "Current authorized clients: " +
+                                this.clients.length,
+                        );
+                    });
+                } catch (err) {
+                    this.log.warn("WS auth failed: " + err);
+                    const errMsg: IBaseMsg = {
+                        type: "unauthorized",
+                        transmissionID: uuid.v4(),
+                    };
+                    ws.send(XUtils.packMessage(errMsg));
+                    ws.close();
                 }
-                this.log.info(
-                    "Current authorized clients: " + this.clients.length,
-                );
-            });
+            };
 
-            client.on("authed", () => {
-                this.log.info("New client authorized: " + client.toString());
-                this.clients.push(client);
-                this.log.info(
-                    "Current authorized clients: " + this.clients.length,
-                );
-            });
+            ws.on("message", onFirstMessage);
+            ws.on("close", () => clearTimeout(timer));
         });
 
         this.api.get(
@@ -394,7 +434,7 @@ export class Spire extends EventEmitter {
                 msgpack.encode({
                     user: (req as any).user,
                     exp: (req as any).exp,
-                    token: req.cookies.auth,
+                    token: (req as any).bearerToken,
                 }),
             );
         });
@@ -435,11 +475,137 @@ export class Spire extends EventEmitter {
         this.api.post("/goodbye", protect, async (req, res) => {
             const token = jwt.sign(
                 { user: censorUser((req as any).user) },
-                process.env.SPK!,
+                getJwtSecret(),
                 { expiresIn: -1 },
             );
-            res.cookie("auth", token, { path: "/" });
             res.sendStatus(200);
+        });
+
+        // ── Device-key auth ──────────────────────────────────────────
+
+        this.api.post("/auth/device", async (req, res) => {
+            try {
+                const { deviceID, signKey } = req.body as {
+                    deviceID: string;
+                    signKey: string;
+                };
+                if (!deviceID || !signKey) {
+                    return res
+                        .status(400)
+                        .send({ error: "deviceID and signKey required." });
+                }
+
+                const device = await this.db.retrieveDevice(deviceID);
+                if (!device || device.signKey !== signKey) {
+                    return res.status(404).send({ error: "Device not found." });
+                }
+
+                // Generate challenge nonce (32 bytes)
+                const nonce = XUtils.encodeHex(nacl.randomBytes(32));
+                const challengeID = uuid.v4();
+                this.deviceChallenges.set(challengeID, {
+                    deviceID,
+                    nonce,
+                    time: Date.now(),
+                });
+
+                // Clean up expired challenges
+                setTimeout(() => {
+                    this.deviceChallenges.delete(challengeID);
+                }, DEVICE_CHALLENGE_EXPIRY);
+
+                this.log.info("Device challenge issued for " + deviceID);
+                return res.send(
+                    msgpack.encode({ challengeID, challenge: nonce }),
+                );
+            } catch (err) {
+                this.log.error("Device challenge error: " + err);
+                return res.sendStatus(500);
+            }
+        });
+
+        this.api.post("/auth/device/verify", async (req, res) => {
+            try {
+                const { challengeID, signed } = req.body as {
+                    challengeID: string;
+                    signed: string;
+                };
+                if (!challengeID || !signed) {
+                    return res.status(400).send({
+                        error: "challengeID and signed required.",
+                    });
+                }
+
+                const challenge = this.deviceChallenges.get(challengeID);
+                if (!challenge) {
+                    return res.status(401).send({
+                        error: "Challenge expired or not found.",
+                    });
+                }
+
+                // Consume the challenge (single-use)
+                this.deviceChallenges.delete(challengeID);
+
+                // Check expiry
+                if (Date.now() - challenge.time > DEVICE_CHALLENGE_EXPIRY) {
+                    return res
+                        .status(401)
+                        .send({ error: "Challenge expired." });
+                }
+
+                // Look up the device to get its public signKey
+                const device = await this.db.retrieveDevice(challenge.deviceID);
+                if (!device) {
+                    return res.status(404).send({ error: "Device not found." });
+                }
+
+                // Verify the Ed25519 signature
+                const opened = nacl.sign.open(
+                    XUtils.decodeHex(signed),
+                    XUtils.decodeHex(device.signKey),
+                );
+                if (!opened) {
+                    return res
+                        .status(401)
+                        .send({ error: "Signature verification failed." });
+                }
+
+                // Verify the signed content matches the challenge nonce
+                const signedNonce = XUtils.encodeHex(opened);
+                if (signedNonce !== challenge.nonce) {
+                    return res
+                        .status(401)
+                        .send({ error: "Challenge mismatch." });
+                }
+
+                // Look up device owner
+                const user = await this.db.retrieveUser(device.owner);
+                if (!user) {
+                    return res
+                        .status(404)
+                        .send({ error: "Device owner not found." });
+                }
+
+                // Issue short-lived JWT (1 hour, not 7 days)
+                const token = jwt.sign(
+                    { user: censorUser(user) },
+                    getJwtSecret(),
+                    { expiresIn: DEVICE_AUTH_JWT_EXPIRY },
+                );
+                this.log.info(
+                    "Device-key auth succeeded for " +
+                        user.username +
+                        " (device " +
+                        device.deviceID +
+                        ")",
+                );
+                return res.send(
+                    msgpack.encode({ user: censorUser(user), token }),
+                );
+            } catch (err) {
+                this.log.error("Device verify error: " + err);
+                return res.sendStatus(500);
+            }
         });
 
         this.api.post("/mail", protect, async (req, res) => {
@@ -525,14 +691,13 @@ export class Spire extends EventEmitter {
 
                 const token = jwt.sign(
                     { user: censorUser(userEntry) },
-                    process.env.SPK!,
+                    getJwtSecret(),
                     { expiresIn: JWT_EXPIRY },
                 );
 
                 // just to make sure
-                jwt.verify(token, process.env.SPK!);
+                jwt.verify(token, getJwtSecret());
 
-                res.cookie("auth", token, { path: "/" });
                 res.send(
                     msgpack.encode({ user: censorUser(userEntry), token }),
                 );
@@ -623,6 +788,13 @@ export class Spire extends EventEmitter {
 
         this.server = this.api.listen(apiPort, () => {
             this.log.info("API started on port " + apiPort.toString());
+        });
+
+        // Accept all WS upgrades — auth happens post-connection.
+        this.server.on("upgrade", (req, socket, head) => {
+            this.wss.handleUpgrade(req, socket, head, (ws) => {
+                this.wss.emit("connection", ws);
+            });
         });
     }
 
