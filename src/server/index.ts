@@ -2,11 +2,8 @@ import * as fs from "node:fs";
 
 import type { IDevice, IEmoji, IPreKeysWS } from "@vex-chat/types";
 import { TokenScopes } from "@vex-chat/types";
-// cookie-parser removed (ADR-008) — all auth via Authorization: Bearer header
 import cors from "cors";
 import express from "express";
-// express-ws removed — WS auth is post-connection (ADR-006)
-
 import helmet from "helmet";
 import morgan from "morgan";
 import parseDuration from "parse-duration";
@@ -142,7 +139,6 @@ export const initApp = (
         }),
     );
     apiAny.use(helmet());
-    // cookieParser removed (ADR-008)
     apiAny.use(msgpackParser);
     apiAny.use(checkAuth);
     apiAny.use(checkDevice);
