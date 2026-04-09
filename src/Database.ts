@@ -799,7 +799,7 @@ export class Database extends EventEmitter {
                 const files = await fs.readdir(migrationFolder);
                 const migrations: Record<string, Migration> = {};
                 for (const file of files) {
-                    if (!file.endsWith(".ts") && !file.endsWith(".js"))
+                    if (!file.endsWith(".js") || file.endsWith(".d.ts"))
                         continue;
                     const key = file.replace(/\.[tj]s$/, "");
                     const fullPath = path.join(migrationFolder, file);
