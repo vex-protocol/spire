@@ -4,14 +4,14 @@ import type winston from "winston";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { devicePayload, TokenScopes } from "@vex-chat/types";
+import { DevicePayloadSchema, TokenScopes } from "@vex-chat/types";
 
 import nacl from "tweetnacl";
 import { stringify } from "uuid";
 
 import { msgpack } from "../utils/msgpack.ts";
 
-import { censorUser } from "./utils.ts";
+import { censorUser, getParam, getUser } from "./utils.ts";
 
 import { protect } from "./index.ts";
 
@@ -23,7 +23,7 @@ export const getUserRouter = (
     const router = express.Router();
 
     router.get("/:id", protect, async (req, res) => {
-        const user = await db.retrieveUser(req.params.id);
+        const user = await db.retrieveUser(getParam(req, "id"));
 
         if (user) {
             return res.send(msgpack.encode(censorUser(user)));
@@ -33,12 +33,14 @@ export const getUserRouter = (
     });
 
     router.get("/:id/devices", protect, async (req, res) => {
-        const deviceList = await db.retrieveUserDeviceList([req.params.id]);
+        const deviceList = await db.retrieveUserDeviceList([
+            getParam(req, "id"),
+        ]);
         return res.send(msgpack.encode(deviceList));
     });
 
     router.get("/:id/permissions", protect, async (req, res) => {
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
         try {
             const permissions = await db.retrievePermissions(
                 userDetails.userID,
@@ -51,19 +53,19 @@ export const getUserRouter = (
     });
 
     router.get("/:id/servers", protect, async (req, res) => {
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
         const servers = await db.retrieveServers(userDetails.userID);
         res.send(msgpack.encode(servers));
     });
 
     router.delete("/:userID/devices/:deviceID", protect, async (req, res) => {
-        const device = await db.retrieveDevice(req.params.deviceID);
+        const device = await db.retrieveDevice(getParam(req, "deviceID"));
 
         if (!device) {
             res.sendStatus(404);
             return;
         }
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
         if (userDetails.userID !== device.owner) {
             res.sendStatus(401);
             return;
@@ -83,8 +85,8 @@ export const getUserRouter = (
     });
 
     router.post("/:id/devices", protect, async (req, res) => {
-        const userDetails = req.user!;
-        const parsed = devicePayload.safeParse(req.body);
+        const userDetails = getUser(req);
+        const parsed = DevicePayloadSchema.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
                 error: "Invalid device payload",

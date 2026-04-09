@@ -31,8 +31,8 @@ export function createLogger(logName: string, logLevel?: string) {
     // `${info.level}: ${info.message} JSON.stringify({ ...rest }) `
     //
     if (
-        process.env.NODE_ENV !== "production" &&
-        process.env.NODE_ENV !== "test"
+        process.env["NODE_ENV"] !== "production" &&
+        process.env["NODE_ENV"] !== "test"
     ) {
         logger.add(
             new winston.transports.Console({

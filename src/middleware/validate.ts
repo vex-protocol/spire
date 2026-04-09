@@ -5,7 +5,7 @@ import type { z } from "zod/v4";
  * Express middleware that validates req.body against a Zod schema.
  * On failure, returns 400 with validation errors.
  */
-export function validateBody<T extends z.ZodType>(schema: T) {
+export function validateBody(schema: z.ZodType) {
     return (req: Request, res: Response, next: NextFunction): void => {
         const result = schema.safeParse(req.body);
         if (!result.success) {
@@ -28,7 +28,9 @@ export function validateParam(name: string) {
     return (req: Request, res: Response, next: NextFunction): void => {
         const value = req.params[name];
         if (!value || typeof value !== "string" || value.trim() === "") {
-            res.status(400).json({ error: `Missing or empty parameter: ${name}` });
+            res.status(400).json({
+                error: `Missing or empty parameter: ${name}`,
+            });
             return;
         }
         next();

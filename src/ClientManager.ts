@@ -18,7 +18,7 @@ import { EventEmitter } from "events";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { xConcat, XUtils } from "@vex-chat/crypto";
-import { mailWS, SocketAuthErrors } from "@vex-chat/types";
+import { MailWSSchema, SocketAuthErrors } from "@vex-chat/types";
 
 import pc from "picocolors";
 import nacl from "tweetnacl";
@@ -55,10 +55,10 @@ export class ClientManager extends EventEmitter {
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ) => void;
-    private user: UserRecord | null;
+    private user: null | UserRecord;
     private userDetails: User;
 
     constructor(
@@ -82,17 +82,20 @@ export class ClientManager extends EventEmitter {
     }
 
     public getDevice(): Device {
-        return this.device!;
+        if (!this.device) {
+            throw new Error("No device set on this client.");
+        }
+        return this.device;
     }
 
     public getUser(): UserRecord {
-        if (!this.authed) {
+        if (!this.authed || !this.user) {
             throw new Error("You must be authed before getting user info.");
         }
-        return this.user!;
+        return this.user;
     }
 
-    public async send(msg: any, header?: Uint8Array) {
+    public send(msg: BaseMsg, header?: Uint8Array) {
         if (header) {
             this.log.debug(pc.bold(pc.red("OUTH")), header.toString());
         } else {
@@ -129,7 +132,7 @@ export class ClientManager extends EventEmitter {
     private authorize(transmissionID: string) {
         this.authed = true;
         this.sendAuthedMessage(transmissionID);
-        this.db.markDeviceLogin(this.getDevice());
+        void this.db.markDeviceLogin(this.getDevice());
         this.emit("authed");
     }
 
@@ -147,10 +150,8 @@ export class ClientManager extends EventEmitter {
         if (this.failed) {
             return;
         }
-        if (this.conn) {
-            this.log.warn("Connection closed.");
-            this.conn.close();
-        }
+        this.log.warn("Connection closed.");
+        this.conn.close();
         this.failed = true;
         this.emit("fail");
     }
@@ -166,7 +167,7 @@ export class ClientManager extends EventEmitter {
                     this.conn.close();
                 }
             }, TOKEN_EXPIRY);
-            this.pingLoop();
+            void this.pingLoop();
         });
         this.conn.on("close", () => {
             this.fail();
@@ -179,28 +180,20 @@ export class ClientManager extends EventEmitter {
                 this.sendErr(
                     msg.transmissionID,
                     "Message is too big. Received size " +
-                        size +
+                        String(size) +
                         " while max size is " +
-                        MAX_MSG_SIZE,
+                        String(MAX_MSG_SIZE),
                 );
                 return;
             }
 
             this.log.info(
                 pc.bold("⟵   ") +
-                    (msg.type === "resource"
-                        ? crudColor(
-                              (msg as ResourceMsg).action.toUpperCase(),
-                          ) +
-                          " " +
-                          pc.bold(
-                              (msg as ResourceMsg).resourceType.toUpperCase(),
-                          )
-                        : pc.bold(msg.type.toUpperCase())) +
+                    pc.bold(msg.type.toUpperCase()) +
                     " " +
                     this.toString() +
                     " " +
-                    pc.yellow(size),
+                    pc.yellow(String(size)),
             );
             this.log.debug(pc.bold(pc.red("INH")), header.toString());
             this.log.debug(pc.bold(pc.red("IN")), msg);
@@ -226,7 +219,8 @@ export class ClientManager extends EventEmitter {
                     this.setAlive(true);
                     break;
                 case "receipt":
-                    this.handleReceipt(msg as ReceiptMsg);
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.handleReceipt(msg as ReceiptMsg);
                     break;
                 case "resource":
                     if (!this.authed) {
@@ -236,10 +230,12 @@ export class ClientManager extends EventEmitter {
                         );
                         break;
                     }
-                    this.parseResourceMsg(msg as ResourceMsg, header);
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.parseResourceMsg(msg as ResourceMsg, header);
                     break;
                 case "response":
-                    this.verifyResponse(msg as RespMsg);
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.verifyResponse(msg as RespMsg);
                     break;
                 default:
                     this.log.info("unsupported message %s", msg.type);
@@ -252,7 +248,7 @@ export class ClientManager extends EventEmitter {
         switch (msg.resourceType) {
             case "mail":
                 if (msg.action === "CREATE") {
-                    const mailResult = mailWS.safeParse(msg.data);
+                    const mailResult = MailWSSchema.safeParse(msg.data);
                     if (!mailResult.success) {
                         this.sendErr(
                             msg.transmissionID,
@@ -270,9 +266,7 @@ export class ClientManager extends EventEmitter {
                             this.getDevice().deviceID,
                             this.getUser().userID,
                         );
-                        this.log.info(
-                            "Received mail for " + mail.recipient,
-                        );
+                        this.log.info("Received mail for " + mail.recipient);
 
                         const deviceDetails = await this.db.retrieveDevice(
                             mail.recipient,
@@ -315,6 +309,7 @@ export class ClientManager extends EventEmitter {
     }
 
     private async pingLoop() {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite loop
         while (true) {
             this.ping();
             await sleep(5000);
@@ -324,7 +319,7 @@ export class ClientManager extends EventEmitter {
     private pong(transmissionID: string) {
         // ping is allowed before auth
         if (this.user) {
-            this.db.markUserSeen(this.user);
+            void this.db.markUserSeen(this.user);
         }
 
         const p = { transmissionID, type: "pong" };
@@ -336,10 +331,15 @@ export class ClientManager extends EventEmitter {
     }
 
     private sendAuthError(error: SocketAuthErrors) {
-        this.send({ error, type: "authErr" });
+        const msg = {
+            error,
+            transmissionID: crypto.randomUUID(),
+            type: "authErr",
+        };
+        this.send(msg);
     }
 
-    private sendErr(transmissionID: string, message: string, data?: any) {
+    private sendErr(transmissionID: string, message: string, data?: unknown) {
         const error: ErrMsg = {
             data,
             error: message,
@@ -351,7 +351,7 @@ export class ClientManager extends EventEmitter {
 
     private sendSuccess(
         transmissionID: string,
-        data: any,
+        data: unknown,
         header?: Uint8Array,
         timestamp?: string,
     ) {
@@ -406,7 +406,7 @@ export class ClientManager extends EventEmitter {
     }
 }
 
-function packMessage(msg: any, header?: Uint8Array) {
+function packMessage(msg: unknown, header?: Uint8Array) {
     const msgb = Uint8Array.from(msgpack.encode(msg));
     const msgh = header || emptyHeader();
     return xConcat(msgh, msgb);
@@ -416,25 +416,11 @@ function unpackMessage(msg: Buffer): [Uint8Array, BaseMsg] {
     const msgp = Uint8Array.from(msg);
 
     const msgh = msgp.slice(0, 32);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- msgpack.decode returns any
     const msgb: BaseMsg = msgpack.decode(msgp.slice(32));
 
     return [msgh, msgb];
 }
-
-const crudColor = (action: string): string => {
-    switch (action) {
-        case "CREATE":
-            return pc.bold(pc.yellow(action));
-        case "DELETE":
-            return pc.bold(pc.red(action));
-        case "RETRIEVE":
-            return pc.bold(pc.yellow(action));
-        case "UPDATE":
-            return pc.bold(pc.cyan(action));
-        default:
-            return action;
-    }
-};
 
 const responseColor = (status: string): string => {
     switch (status) {

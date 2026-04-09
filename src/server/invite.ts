@@ -6,6 +6,8 @@ import express from "express";
 
 import { msgpack } from "../utils/msgpack.ts";
 
+import { getParam, getUser } from "./utils.ts";
+
 import { protect } from "./index.ts";
 
 export const getInviteRouter = (
@@ -16,15 +18,15 @@ export const getInviteRouter = (
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ) => void,
 ) => {
     const router = express.Router();
     router.patch("/:inviteID", protect, async (req, res) => {
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
 
-        const invite = await db.retrieveInvite(req.params.inviteID);
+        const invite = await db.retrieveInvite(getParam(req, "inviteID"));
         if (!invite) {
             res.sendStatus(404);
             return;
@@ -51,7 +53,7 @@ export const getInviteRouter = (
     });
 
     router.get("/:inviteID", protect, async (req, res) => {
-        const invite = await db.retrieveInvite(req.params.inviteID);
+        const invite = await db.retrieveInvite(getParam(req, "inviteID"));
         if (!invite) {
             res.sendStatus(404);
             return;

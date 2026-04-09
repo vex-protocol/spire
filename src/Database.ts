@@ -89,7 +89,7 @@ export class Database extends EventEmitter {
             dialect: new SqliteDialect({ database: sqliteDb }),
         });
 
-        this.init();
+        void this.init();
     }
 
     public async close(): Promise<void> {
@@ -127,7 +127,7 @@ export class Database extends EventEmitter {
 
         const medPreKeys = {
             deviceID: device.deviceID,
-            index: payload.preKeyIndex ?? 0,
+            index: payload.preKeyIndex,
             keyID: crypto.randomUUID(),
             publicKey: payload.preKey,
             signature: payload.preKeySignature,
@@ -179,8 +179,9 @@ export class Database extends EventEmitter {
             .where("userID", "=", userID)
             .where("resourceID", "=", resourceID)
             .execute();
-        if (checkPermission.length > 0) {
-            return checkPermission[0];
+        const existing = checkPermission[0];
+        if (existing) {
+            return existing;
         }
 
         const permission: Permission = {
@@ -219,7 +220,7 @@ export class Database extends EventEmitter {
     public async createUser(
         regKey: Uint8Array,
         regPayload: RegistrationPayload,
-    ): Promise<[UserRecord | null, Error | null]> {
+    ): Promise<[null | UserRecord, Error | null]> {
         try {
             const salt = xMakeNonce();
             const passwordHash = hashPassword(regPayload.password, salt);
@@ -236,7 +237,7 @@ export class Database extends EventEmitter {
                 .insertInto("users")
                 .values({
                     ...user,
-                    lastSeen: user.lastSeen.toString(),
+                    lastSeen: user.lastSeen,
                 })
                 .execute();
             await this.createDevice(user.userID, regPayload);
@@ -343,7 +344,7 @@ export class Database extends EventEmitter {
         return keyBundle;
     }
 
-    public async getOTK(deviceID: string): Promise<PreKeysWS | null> {
+    public async getOTK(deviceID: string): Promise<null | PreKeysWS> {
         const rows: PreKeysSQL[] = await this.db
             .selectFrom("oneTimeKeys")
             .selectAll()
@@ -351,10 +352,10 @@ export class Database extends EventEmitter {
             .orderBy("index")
             .limit(1)
             .execute();
-        if (rows.length === 0) {
+        const otkInfo = rows[0];
+        if (!otkInfo) {
             return null;
         }
-        const [otkInfo] = rows;
         const otk: PreKeysWS = {
             deviceID: otkInfo.deviceID,
             index: otkInfo.index,
@@ -362,17 +363,13 @@ export class Database extends EventEmitter {
             signature: XUtils.decodeHex(otkInfo.signature),
         };
 
-        try {
-            // delete the otk
-            await this.db
-                .deleteFrom("oneTimeKeys")
-                .where("deviceID", "=", deviceID)
-                .where("index", "=", otk.index)
-                .execute();
-            return otk;
-        } catch (err: unknown) {
-            throw err;
-        }
+        // delete the otk
+        await this.db
+            .deleteFrom("oneTimeKeys")
+            .where("deviceID", "=", deviceID)
+            .where("index", "=", otk.index)
+            .execute();
+        return otk;
     }
 
     public async getOTKCount(deviceID: string): Promise<number> {
@@ -384,16 +381,16 @@ export class Database extends EventEmitter {
         return Number(result?.count ?? 0);
     }
 
-    public async getPreKeys(deviceID: string): Promise<PreKeysWS | null> {
+    public async getPreKeys(deviceID: string): Promise<null | PreKeysWS> {
         const rows: PreKeysSQL[] = await this.db
             .selectFrom("preKeys")
             .selectAll()
             .where("deviceID", "=", deviceID)
             .execute();
-        if (rows.length === 0) {
+        const preKeyInfo = rows[0];
+        if (!preKeyInfo) {
             return null;
         }
-        const [preKeyInfo] = rows;
         const preKey: PreKeysWS = {
             deviceID: preKeyInfo.deviceID,
             index: preKeyInfo.index,
@@ -487,10 +484,7 @@ export class Database extends EventEmitter {
             .limit(1)
             .execute();
 
-        if (channels.length === 0) {
-            return null;
-        }
-        return channels[0];
+        return channels[0] ?? null;
     }
 
     public async retrieveChannels(serverID: string): Promise<Channel[]> {
@@ -511,11 +505,8 @@ export class Database extends EventEmitter {
                 .where("deleted", "=", 0)
                 .execute();
 
-            if (rows.length === 0) {
-                return null;
-            }
-            const [device] = rows;
-            return toDevice(device);
+            const device = rows[0];
+            return device ? toDevice(device) : null;
         }
         if (pubkeyRegex.test(deviceID)) {
             const rows = await this.db
@@ -524,11 +515,8 @@ export class Database extends EventEmitter {
                 .where("signKey", "=", deviceID)
                 .where("deleted", "=", 0)
                 .execute();
-            if (rows.length === 0) {
-                return null;
-            }
-            const [device] = rows;
-            return toDevice(device);
+            const device = rows[0];
+            return device ? toDevice(device) : null;
         }
         return null;
     }
@@ -539,10 +527,7 @@ export class Database extends EventEmitter {
             .selectAll()
             .where("emojiID", "=", emojiID)
             .execute();
-        if (rows.length === 0) {
-            return null;
-        }
-        return rows[0];
+        return rows[0] ?? null;
     }
 
     public async retrieveEmojiList(userID: string): Promise<Emoji[]> {
@@ -559,10 +544,7 @@ export class Database extends EventEmitter {
             .selectAll()
             .where("fileID", "=", fileID)
             .execute();
-        if (file.length === 0) {
-            return null;
-        }
-        return file[0];
+        return file[0] ?? null;
     }
 
     public async retrieveGroupMembers(
@@ -595,10 +577,7 @@ export class Database extends EventEmitter {
             .selectAll()
             .where("inviteID", "=", inviteID)
             .execute();
-        if (rows.length === 0) {
-            return null;
-        }
-        return rows[0];
+        return rows[0] ?? null;
     }
 
     public async retrieveMail(
@@ -618,7 +597,7 @@ export class Database extends EventEmitter {
                 authorID: mail.authorID,
                 cipher: XUtils.decodeHex(mail.cipher),
                 extra: XUtils.decodeHex(mail.extra),
-                forward: Boolean(mail.forward),
+                forward: mail.forward,
                 group: mail.group ? XUtils.decodeHex(mail.group) : null,
                 mailID: mail.mailID,
                 mailType: mail.mailType,
@@ -639,18 +618,14 @@ export class Database extends EventEmitter {
 
     public async retrievePermission(
         permissionID: string,
-    ): Promise<Permission | null> {
+    ): Promise<null | Permission> {
         const rows = await this.db
             .selectFrom("permissions")
             .selectAll()
             .where("permissionID", "=", permissionID)
             .execute();
 
-        if (rows.length === 0) {
-            return null;
-        }
-
-        return rows[0];
+        return rows[0] ?? null;
     }
 
     public async retrievePermissions(
@@ -684,17 +659,15 @@ export class Database extends EventEmitter {
             .execute();
     }
 
-    public async retrieveServer(serverID: string): Promise<Server | null> {
+    public async retrieveServer(serverID: string): Promise<null | Server> {
         const rows = await this.db
             .selectFrom("servers")
             .selectAll()
             .where("serverID", "=", serverID)
             .limit(1)
             .execute();
-        if (rows.length === 0) {
-            return null;
-        }
-        return toServer(rows[0]);
+        const row = rows[0];
+        return row ? toServer(row) : null;
     }
 
     public async retrieveServerInvites(serverID: string): Promise<Invite[]> {
@@ -710,7 +683,7 @@ export class Database extends EventEmitter {
                 new Date(invite.expiration).getTime();
 
             if (!valid) {
-                this.deleteInvite(invite.inviteID);
+                void this.deleteInvite(invite.inviteID);
             }
 
             return valid;
@@ -719,9 +692,6 @@ export class Database extends EventEmitter {
 
     public async retrieveServers(userID: string): Promise<Server[]> {
         const serverPerms = await this.retrievePermissions(userID, "server");
-        if (!serverPerms) {
-            return [];
-        }
         const serverList: Server[] = [];
         for (const perm of serverPerms) {
             const server = await this.retrieveServer(perm.resourceID);
@@ -735,7 +705,7 @@ export class Database extends EventEmitter {
     // the identifier can be username, public key, or userID
     public async retrieveUser(
         userIdentifier: string,
-    ): Promise<UserRecord | null> {
+    ): Promise<null | UserRecord> {
         let rows;
         if (uuidValidate(userIdentifier)) {
             rows = await this.db
@@ -753,10 +723,8 @@ export class Database extends EventEmitter {
                 .execute();
         }
 
-        if (rows.length === 0) {
-            return null;
-        }
-        return toUserRecord(rows[0]);
+        const row = rows[0];
+        return row ? toUserRecord(row) : null;
     }
 
     public async retrieveUserDeviceList(userIDs: string[]): Promise<Device[]> {
@@ -801,7 +769,7 @@ export class Database extends EventEmitter {
             .values({
                 ...entry,
                 forward: entry.forward ? 1 : 0,
-                time: entry.time.toString(),
+                time: entry.time,
             })
             .execute();
     }
@@ -836,6 +804,7 @@ export class Database extends EventEmitter {
                     const key = file.replace(/\.[tj]s$/, "");
                     const fullPath = path.join(migrationFolder, file);
                     const url = pathToFileURL(fullPath).href;
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- dynamic import for migration files
                     migrations[key] = await import(url);
                 }
                 return migrations;

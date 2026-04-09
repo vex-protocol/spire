@@ -9,6 +9,7 @@ import type { Device, User } from "@vex-chat/types";
  * available on `req` in all route handlers.
  */
 declare global {
+    // eslint-disable-next-line @typescript-eslint/no-namespace -- required for Express declaration merging
     namespace Express {
         interface Request {
             bearerToken?: string;

@@ -5,7 +5,7 @@
  * Falls back to SPK for backward compat with existing deployments.
  */
 export function getJwtSecret(): string {
-    const secret = process.env.JWT_SECRET ?? process.env.SPK;
+    const secret = process.env["JWT_SECRET"] ?? process.env["SPK"];
     if (!secret) {
         throw new Error(
             "Neither JWT_SECRET nor SPK is set. " +

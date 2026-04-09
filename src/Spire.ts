@@ -1,10 +1,4 @@
-import type {
-    ActionToken,
-    BaseMsg,
-    Device,
-    NotifyMsg,
-    User,
-} from "@vex-chat/types";
+import type { ActionToken, BaseMsg, NotifyMsg, User } from "@vex-chat/types";
 import type { Server } from "http";
 import type winston from "winston";
 
@@ -18,23 +12,22 @@ import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
 import {
-    mailWS,
-    registrationPayload,
+    MailWSSchema,
+    RegistrationPayloadSchema,
     TokenScopes,
-    user as userSchema,
+    UserSchema,
 } from "@vex-chat/types";
-
-import { z } from "zod/v4";
 
 import jwt from "jsonwebtoken";
 import nacl from "tweetnacl";
 import { stringify as uuidStringify } from "uuid";
 import { WebSocketServer } from "ws";
+import { z } from "zod/v4";
 
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
-import { censorUser } from "./server/utils.ts";
+import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { createLogger } from "./utils/createLogger.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
@@ -58,7 +51,7 @@ const wsAuthMsg = z.object({
 const jwtPayload = z.object({
     bearerToken: z.string().optional(),
     exp: z.number().optional(),
-    user: userSchema,
+    user: UserSchema,
 });
 
 const authPayload = z.object({
@@ -77,8 +70,8 @@ const deviceVerifyPayload = z.object({
 });
 
 const mailPostPayload = z.object({
-    header: z.custom<Uint8Array<any>>((val) => val instanceof Uint8Array),
-    mail: mailWS,
+    header: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
+    mail: MailWSSchema,
 });
 
 const directories = ["files", "avatars", "emoji"];
@@ -96,8 +89,16 @@ const getAppVersion = (): string => {
                 encoding: "utf8",
             },
         );
-        const pkg = JSON.parse(raw) as { version?: string };
-        return pkg.version || "unknown";
+        const pkg: unknown = JSON.parse(raw);
+        if (
+            typeof pkg === "object" &&
+            pkg !== null &&
+            "version" in pkg &&
+            typeof pkg.version === "string"
+        ) {
+            return pkg.version;
+        }
+        return "unknown";
     } catch {
         return "unknown";
     }
@@ -168,8 +169,7 @@ export class Spire extends EventEmitter {
             this.dbReady = true;
             this.bootstrapRequestCounter().catch((err: unknown) => {
                 this.log.error(
-                    "Failed to load persisted request counter: " +
-                        String(err),
+                    "Failed to load persisted request counter: " + String(err),
                 );
             });
         });
@@ -233,9 +233,10 @@ export class Spire extends EventEmitter {
             if (!this.requestsTotalLoaded) {
                 this.queuedRequestIncrements += 1;
             } else {
-                this.db.incrementRequestsTotal(1).catch((err) => {
+                this.db.incrementRequestsTotal(1).catch((err: unknown) => {
                     this.log.warn(
-                        "Failed to persist request counter increment: " + err,
+                        "Failed to persist request counter increment: " +
+                            String(err),
                     );
                 });
             }
@@ -273,7 +274,7 @@ export class Spire extends EventEmitter {
                 ws.off("message", onFirstMessage);
 
                 try {
-                    const rawParsed = JSON.parse(str);
+                    const rawParsed: unknown = JSON.parse(str);
                     const authResult = wsAuthMsg.safeParse(rawParsed);
                     if (!authResult.success) {
                         throw new Error(
@@ -319,7 +320,7 @@ export class Spire extends EventEmitter {
                         }
                         this.log.info(
                             "Current authorized clients: " +
-                                this.clients.length,
+                                String(this.clients.length),
                         );
                     });
 
@@ -330,7 +331,7 @@ export class Spire extends EventEmitter {
                         this.clients.push(client);
                         this.log.info(
                             "Current authorized clients: " +
-                                this.clients.length,
+                                String(this.clients.length),
                         );
                     });
                 } catch (err: unknown) {
@@ -345,19 +346,21 @@ export class Spire extends EventEmitter {
             };
 
             ws.on("message", onFirstMessage);
-            ws.on("close", () => clearTimeout(timer));
+            ws.on("close", () => {
+                clearTimeout(timer);
+            });
         });
 
         this.api.get(
             "/token/:tokenType",
             (req, res, next) => {
-                if (req.params.tokenType !== "register") {
+                if (getParam(req, "tokenType") !== "register") {
                     protect(req, res, next);
                 } else {
                     next();
                 }
             },
-            async (req, res) => {
+            (req, res) => {
                 const allowedTokens = [
                     "file",
                     "register",
@@ -368,7 +371,7 @@ export class Spire extends EventEmitter {
                     "connect",
                 ];
 
-                const { tokenType } = req.params;
+                const tokenType = getParam(req, "tokenType");
 
                 if (!allowedTokens.includes(tokenType)) {
                     res.sendStatus(400);
@@ -432,7 +435,7 @@ export class Spire extends EventEmitter {
             },
         );
 
-        this.api.post("/whoami", async (req, res) => {
+        this.api.post("/whoami", (req, res) => {
             if (!req.user) {
                 res.sendStatus(401);
                 return;
@@ -480,12 +483,8 @@ export class Spire extends EventEmitter {
             });
         });
 
-        this.api.post("/goodbye", protect, async (req, res) => {
-            jwt.sign(
-                { user: req.user },
-                getJwtSecret(),
-                { expiresIn: -1 },
-            );
+        this.api.post("/goodbye", protect, (req, res) => {
+            jwt.sign({ user: req.user }, getJwtSecret(), { expiresIn: -1 });
             res.sendStatus(200);
         });
 
@@ -618,7 +617,7 @@ export class Spire extends EventEmitter {
                 res.sendStatus(401);
                 return;
             }
-            const authorUserDetails = req.user!;
+            const authorUserDetails = getUser(req);
 
             const parsed = mailPostPayload.safeParse(req.body);
             if (!parsed.success) {
@@ -669,7 +668,7 @@ export class Spire extends EventEmitter {
                 });
                 return;
             }
-            const { username, password } = parsed.data;
+            const { password, username } = parsed.data;
 
             try {
                 const userEntry = await this.db.retrieveUser(username);
@@ -709,7 +708,7 @@ export class Spire extends EventEmitter {
 
         this.api.post("/register", async (req, res) => {
             try {
-                const regParsed = registrationPayload.safeParse(req.body);
+                const regParsed = RegistrationPayloadSchema.safeParse(req.body);
                 if (!regParsed.success) {
                     res.status(400).json({
                         error: "Invalid registration payload",
@@ -743,10 +742,8 @@ export class Spire extends EventEmitter {
                     );
                     if (err !== null) {
                         const errCode =
-                            typeof err === "object" &&
-                            err !== null &&
-                            "code" in err
-                                ? (err as { code: string }).code
+                            "code" in err && typeof err.code === "string"
+                                ? err.code
                                 : undefined;
                         switch (errCode) {
                             case "ER_DUP_ENTRY":
@@ -778,7 +775,8 @@ export class Spire extends EventEmitter {
                                 break;
                             default:
                                 this.log.info(
-                                    "Unsupported sql error type: " + errCode,
+                                    "Unsupported sql error type: " +
+                                        String(errCode),
                                 );
                                 this.log.error(String(err));
                                 res.sendStatus(500);
@@ -786,7 +784,11 @@ export class Spire extends EventEmitter {
                         }
                     } else {
                         this.log.info("Registration success.");
-                        res.send(msgpack.encode(censorUser(user!)));
+                        if (!user) {
+                            res.sendStatus(500);
+                            return;
+                        }
+                        res.send(msgpack.encode(censorUser(user)));
                     }
                 } else {
                     res.status(400).send({
@@ -800,7 +802,7 @@ export class Spire extends EventEmitter {
         });
 
         this.server = this.api.listen(apiPort, () => {
-            this.log.info("API started on port " + apiPort.toString());
+            this.log.info("API started on port " + String(apiPort));
         });
 
         // Accept all WS upgrades — auth happens post-connection.
@@ -815,7 +817,7 @@ export class Spire extends EventEmitter {
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ): void {
         for (const client of this.clients) {
@@ -851,9 +853,8 @@ export class Spire extends EventEmitter {
                     continue;
                 }
 
-                const age =
-                    Date.now() - new Date(rKey.time).getTime();
-                this.log.info("Token found, " + age + " ms old.");
+                const age = Date.now() - new Date(rKey.time).getTime();
+                this.log.info("Token found, " + String(age) + " ms old.");
                 if (age < TOKEN_EXPIRY) {
                     this.log.info("Token is valid.");
                     this.deleteActionToken(rKey);

@@ -8,13 +8,7 @@ import * as fsp from "node:fs/promises";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import {
-    devicePayload,
-    filePayload,
-    preKeysWS,
-    TokenScopes,
-    user as userSchema,
-} from "@vex-chat/types";
+import { PreKeysWSSchema, TokenScopes, UserSchema } from "@vex-chat/types";
 
 import cors from "cors";
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
@@ -36,9 +30,13 @@ import { getAvatarRouter } from "./avatar.ts";
 import { getFileRouter } from "./file.ts";
 import { getInviteRouter } from "./invite.ts";
 import { setupOpenApiDocs } from "./openapi.ts";
-import { hasAnyPermission, hasPermission, userHasPermission } from "./permissions.ts";
+import {
+    hasAnyPermission,
+    hasPermission,
+    userHasPermission,
+} from "./permissions.ts";
 import { getUserRouter } from "./user.ts";
-import { censorUser } from "./utils.ts";
+import { censorUser, getParam, getUser } from "./utils.ts";
 
 // expiry of regkeys
 export const EXPIRY_TIME = 1000 * 60 * 5;
@@ -64,7 +62,7 @@ const channelPayload = z.object({
 const deviceListPayload = z.array(z.string());
 
 const connectPayload = z.object({
-    signed: z.custom<Uint8Array<any>>((val) => val instanceof Uint8Array),
+    signed: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
 });
 
 const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
@@ -77,7 +75,7 @@ const emojiPayload = z.object({
 
 const jwtUserPayload = z.object({
     exp: z.number().optional(),
-    user: userSchema,
+    user: UserSchema,
 });
 
 const jwtDevicePayload = z.object({
@@ -106,10 +104,12 @@ const checkAuth: express.RequestHandler = (req, _res, next) => {
             const parsed = jwtUserPayload.safeParse(result);
             if (parsed.success) {
                 req.user = parsed.data.user;
-                req.exp = parsed.data.exp;
+                if (parsed.data.exp !== undefined) {
+                    req.exp = parsed.data.exp;
+                }
                 req.bearerToken = token;
             }
-        } catch (err: unknown) {
+        } catch {
             // Token verification failed — continue without auth
         }
     }
@@ -125,17 +125,14 @@ const checkDevice: express.RequestHandler = (req, _res, next) => {
             if (parsed.success) {
                 req.device = parsed.data.device;
             }
-        } catch (err: unknown) {
+        } catch {
             // Device token verification failed — continue without device
         }
     }
     next();
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Express
-// overload resolution requires `any` on middleware passed to route methods;
-// otherwise it locks params to ParamsDictionary (string | string[]).
-export const protect = (req: any, res: any, next: () => void): void => {
+export const protect: express.RequestHandler = (req, res, next) => {
     if (!req.user) {
         res.sendStatus(401);
         return;
@@ -147,6 +144,7 @@ export const protect = (req: any, res: any, next: () => void): void => {
 export const msgpackParser: express.RequestHandler = (req, res, next) => {
     if (req.is("application/msgpack")) {
         try {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument -- Express req.body is any; decoded body is validated by route-level Zod schemas
             req.body = msgpack.decode(req.body);
         } catch {
             res.sendStatus(400);
@@ -173,7 +171,7 @@ export const initApp = (
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ) => void,
 ) => {
@@ -203,7 +201,7 @@ export const initApp = (
     api.use(cors({ credentials: true }));
 
     api.get("/server/:id", protect, async (req, res) => {
-        const server = await db.retrieveServer(req.params.id);
+        const server = await db.retrieveServer(getParam(req, "id"));
 
         if (server) {
             return res.send(msgpack.encode(server));
@@ -213,15 +211,15 @@ export const initApp = (
     });
 
     api.post("/server/:name", protect, async (req, res) => {
-        const userDetails = req.user!;
-        const serverName = atob(req.params.name);
+        const userDetails = getUser(req);
+        const serverName = atob(getParam(req, "name"));
 
         const server = await db.createServer(serverName, userDetails.userID);
         res.send(msgpack.encode(server));
     });
 
     api.post("/server/:serverID/invites", protect, async (req, res) => {
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
 
         const parsedPayload = invitePayload.safeParse(req.body);
         if (!parsedPayload.success) {
@@ -232,7 +230,7 @@ export const initApp = (
             return;
         }
         const payload = parsedPayload.data;
-        const serverEntry = await db.retrieveServer(req.params.serverID);
+        const serverEntry = await db.retrieveServer(getParam(req, "serverID"));
 
         if (!serverEntry) {
             res.sendStatus(404);
@@ -244,7 +242,13 @@ export const initApp = (
             "server",
         );
 
-        if (!hasPermission(permissions, req.params.serverID, POWER_LEVELS.INVITE)) {
+        if (
+            !hasPermission(
+                permissions,
+                getParam(req, "serverID"),
+                POWER_LEVELS.INVITE,
+            )
+        ) {
             log.warn("No permission!");
             res.sendStatus(401);
             return;
@@ -269,25 +273,33 @@ export const initApp = (
     });
 
     api.get("/server/:serverID/invites", protect, async (req, res) => {
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
 
         const permissions = await db.retrievePermissions(
             userDetails.userID,
             "server",
         );
 
-        if (!hasPermission(permissions, req.params.serverID, POWER_LEVELS.INVITE)) {
+        if (
+            !hasPermission(
+                permissions,
+                getParam(req, "serverID"),
+                POWER_LEVELS.INVITE,
+            )
+        ) {
             res.sendStatus(401);
             return;
         }
 
-        const inviteList = await db.retrieveServerInvites(req.params.serverID);
+        const inviteList = await db.retrieveServerInvites(
+            getParam(req, "serverID"),
+        );
         res.send(msgpack.encode(inviteList));
     });
 
     api.delete("/server/:id", protect, async (req, res) => {
-        const userDetails = req.user!;
-        const serverID = req.params.id;
+        const userDetails = getUser(req);
+        const serverID = getParam(req, "id");
         const permissions = await db.retrievePermissions(
             userDetails.userID,
             "server",
@@ -301,8 +313,8 @@ export const initApp = (
     });
 
     api.post("/server/:id/channels", protect, async (req, res) => {
-        const userDetails = req.user!;
-        const serverID = req.params.id;
+        const userDetails = getUser(req);
+        const serverID = getParam(req, "id");
         // resourceID is serverID
         const parsedBody = channelPayload.safeParse(req.body);
         if (!parsedBody.success) {
@@ -337,8 +349,8 @@ export const initApp = (
     });
 
     api.get("/server/:id/channels", protect, async (req, res) => {
-        const serverID = req.params.id;
-        const userDetails = req.user!;
+        const serverID = getParam(req, "id");
+        const userDetails = getUser(req);
         const permissions = await db.retrievePermissions(
             userDetails.userID,
             "server",
@@ -352,31 +364,27 @@ export const initApp = (
     });
 
     api.get("/server/:serverID/emoji", protect, async (req, res) => {
-        const rows = await db.retrieveEmojiList(req.params.serverID);
+        const rows = await db.retrieveEmojiList(getParam(req, "serverID"));
         res.send(msgpack.encode(rows));
     });
 
     api.get("/server/:serverID/permissions", protect, async (req, res) => {
-        const userDetails = req.user!;
-        const serverID = req.params.serverID;
+        const userDetails = getUser(req);
+        const serverID = getParam(req, "serverID");
         try {
             const permissions =
                 await db.retrievePermissionsByResourceID(serverID);
-            if (permissions) {
-                let found = false;
-                for (const perm of permissions) {
-                    if (perm.userID === userDetails.userID) {
-                        res.send(msgpack.encode(permissions));
-                        found = true;
-                        break;
-                    }
+            let found = false;
+            for (const perm of permissions) {
+                if (perm.userID === userDetails.userID) {
+                    res.send(msgpack.encode(permissions));
+                    found = true;
+                    break;
                 }
-                if (!found) {
-                    res.sendStatus(401);
-                    return;
-                }
-            } else {
-                res.sendStatus(404);
+            }
+            if (!found) {
+                res.sendStatus(401);
+                return;
             }
         } catch (err: unknown) {
             res.status(500).send(String(err));
@@ -384,8 +392,8 @@ export const initApp = (
     });
 
     api.delete("/channel/:id", protect, async (req, res) => {
-        const channelID = req.params.id;
-        const userDetails = req.user!;
+        const channelID = getParam(req, "id");
+        const userDetails = getUser(req);
 
         const channel = await db.retrieveChannel(channelID);
 
@@ -426,7 +434,7 @@ export const initApp = (
     });
 
     api.get("/channel/:id", protect, async (req, res) => {
-        const channel = await db.retrieveChannel(req.params.id);
+        const channel = await db.retrieveChannel(getParam(req, "id"));
 
         if (channel) {
             return res.send(msgpack.encode(channel));
@@ -436,8 +444,8 @@ export const initApp = (
     });
 
     api.delete("/permission/:permissionID", protect, async (req, res) => {
-        const permissionID = req.params.permissionID;
-        const userDetails = req.user!;
+        const permissionID = getParam(req, "permissionID");
+        const userDetails = getUser(req);
         try {
             // msg.data is permID
             const permToDelete = await db.retrievePermission(permissionID);
@@ -459,7 +467,7 @@ export const initApp = (
                         (perm.powerLevel > POWER_LEVELS.DELETE &&
                             perm.powerLevel > permToDelete.powerLevel))
                 ) {
-                    db.deletePermission(permToDelete.permissionID);
+                    await db.deletePermission(permToDelete.permissionID);
                     res.sendStatus(200);
                     return;
                 }
@@ -472,8 +480,8 @@ export const initApp = (
     });
 
     api.post("/userList/:channelID", async (req, res) => {
-        const userDetails = req.user!;
-        const channelID: string = req.params.channelID;
+        const userDetails = getUser(req);
+        const channelID = getParam(req, "channelID");
 
         try {
             const channel = await db.retrieveChannel(channelID);
@@ -517,7 +525,7 @@ export const initApp = (
     });
 
     api.get("/device/:id", protect, async (req, res) => {
-        const device = await db.retrieveDevice(req.params.id);
+        const device = await db.retrieveDevice(getParam(req, "id"));
 
         if (device) {
             return res.send(msgpack.encode(device));
@@ -528,7 +536,7 @@ export const initApp = (
 
     api.post("/device/:id/keyBundle", protect, async (req, res) => {
         try {
-            const keyBundle = await db.getKeyBundle(req.params.id);
+            const keyBundle = await db.getKeyBundle(getParam(req, "id"));
             if (keyBundle) {
                 res.send(msgpack.encode(keyBundle));
             } else {
@@ -563,7 +571,7 @@ export const initApp = (
             return;
         }
         const { signed } = parsedBody.data;
-        const device = await db.retrieveDevice(req.params.id);
+        const device = await db.retrieveDevice(getParam(req, "id"));
         if (!device) {
             res.sendStatus(404);
             return;
@@ -602,7 +610,7 @@ export const initApp = (
     });
 
     api.post("/device/:id/otk", protect, async (req, res) => {
-        const parsedOTKs = z.array(preKeysWS).safeParse(req.body);
+        const parsedOTKs = z.array(PreKeysWSSchema).safeParse(req.body);
         if (!parsedOTKs.success) {
             res.status(400).json({
                 error: "Invalid OTK payload",
@@ -616,13 +624,13 @@ export const initApp = (
             return;
         }
 
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
 
-        const deviceID = req.params.id;
-        const [otk] = submittedOTKs;
+        const deviceID = getParam(req, "id");
+        const otk = submittedOTKs[0];
 
         const device = await db.retrieveDevice(deviceID);
-        if (!device) {
+        if (!device || !otk) {
             res.sendStatus(404);
             return;
         }
@@ -646,12 +654,12 @@ export const initApp = (
     });
 
     api.get("/emoji/:emojiID/details", protect, async (req, res) => {
-        const emoji = await db.retrieveEmoji(req.params.emojiID);
+        const emoji = await db.retrieveEmoji(getParam(req, "emojiID"));
         res.send(msgpack.encode(emoji));
     });
 
     api.get("/emoji/:emojiID", protect, async (req, res) => {
-        const safeId = safePathParam.safeParse(req.params.emojiID);
+        const safeId = safePathParam.safeParse(getParam(req, "emojiID"));
         if (!safeId.success) {
             res.sendStatus(400);
             return;
@@ -684,7 +692,7 @@ export const initApp = (
         }
         const payload = parsedPayload.data;
 
-        const userDetails = req.user!;
+        const userDetails = getUser(req);
         const device = req.device;
 
         if (!device) {
@@ -698,13 +706,19 @@ export const initApp = (
         }
 
         const buf = Buffer.from(XUtils.decodeBase64(payload.file));
-        const serverEntry = await db.retrieveServer(req.params.serverID);
+        const serverEntry = await db.retrieveServer(getParam(req, "serverID"));
 
         const permissionList = await db.retrievePermissionsByResourceID(
-            req.params.serverID,
+            getParam(req, "serverID"),
         );
 
-        if (!userHasPermission(permissionList, userDetails.userID, POWER_LEVELS.EMOJI)) {
+        if (
+            !userHasPermission(
+                permissionList,
+                userDetails.userID,
+                POWER_LEVELS.EMOJI,
+            )
+        ) {
             res.sendStatus(401);
             return;
         }
@@ -725,7 +739,7 @@ export const initApp = (
             res.status(400).send({
                 error:
                     "Unsupported file type. Expected jpeg, png, gif, apng, or avif but received " +
-                    mimeType?.ext,
+                    String(mimeType?.ext),
             });
             return;
         }
@@ -733,7 +747,7 @@ export const initApp = (
         const emoji: Emoji = {
             emojiID: crypto.randomUUID(),
             name: payload.name,
-            owner: req.params.serverID,
+            owner: getParam(req, "serverID"),
         };
 
         await db.createEmoji(emoji);
@@ -763,13 +777,13 @@ export const initApp = (
                 return;
             }
             const payload = parsedPayload.data;
-            const serverID = req.params.serverID;
+            const serverID = getParam(req, "serverID");
             if (typeof serverID !== "string") {
                 res.sendStatus(400);
                 return;
             }
             const serverEntry = await db.retrieveServer(serverID);
-            const userDetails = req.user!;
+            const userDetails = getUser(req);
             const deviceDetails = req.device;
             if (!deviceDetails) {
                 res.sendStatus(401);
@@ -779,7 +793,13 @@ export const initApp = (
             const permissionList =
                 await db.retrievePermissionsByResourceID(serverID);
 
-            if (!userHasPermission(permissionList, userDetails.userID, POWER_LEVELS.EMOJI)) {
+            if (
+                !userHasPermission(
+                    permissionList,
+                    userDetails.userID,
+                    POWER_LEVELS.EMOJI,
+                )
+            ) {
                 res.sendStatus(401);
                 return;
             }
@@ -809,7 +829,7 @@ export const initApp = (
                 res.status(400).send({
                     error:
                         "Unsupported file type. Expected jpeg, png, gif, apng, or avif but received " +
-                        mimeType?.ext,
+                        String(mimeType?.ext),
                 });
                 return;
             }
@@ -855,5 +875,5 @@ export const initApp = (
  * @ignore
  */
 const jestRun = () => {
-    return process.env.JEST_WORKER_ID !== undefined;
+    return process.env["JEST_WORKER_ID"] !== undefined;
 };

@@ -1,5 +1,5 @@
 import type { SpireOptions } from "../Spire.ts";
-import type { PreKeysSQL, PreKeysWS } from "@vex-chat/types";
+import type { PreKeysWS } from "@vex-chat/types";
 
 import { XUtils } from "@vex-chat/crypto";
 
@@ -12,13 +12,11 @@ import { Database } from "../Database.ts";
 // vi.mock is hoisted above all imports automatically.
 // Minimal stubs for uuid functions used by spire src: v4, parse, stringify.
 vi.mock("uuid", () => ({
-    parse: (s: string) =>
-        Uint8Array.from(
-            s
-                .replace(/-/g, "")
-                .match(/.{2}/g)!
-                .map((b) => parseInt(b, 16)),
-        ),
+    parse: (s: string) => {
+        const matches = s.replace(/-/g, "").match(/.{2}/g);
+        if (!matches) throw new Error("Invalid UUID");
+        return Uint8Array.from(matches.map((b) => parseInt(b, 16)));
+    },
     stringify: (b: Uint8Array) => {
         const hex = Array.from(b)
             .map((x) => x.toString(16).padStart(2, "0"))
@@ -107,8 +105,10 @@ describe("Database", () => {
                             expect(oneTimeKey).toEqual(testWSPreKey);
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });
@@ -133,8 +133,10 @@ describe("Database", () => {
                             expect(result).toEqual(testWSPreKey);
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });
@@ -152,8 +154,10 @@ describe("Database", () => {
                             expect(result).toBeNull();
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });

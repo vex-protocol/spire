@@ -9,12 +9,14 @@ import * as path from "node:path";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { filePayload } from "@vex-chat/types";
+import { FilePayloadSchema } from "@vex-chat/types";
 
 import multer from "multer";
 import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
+
+import { getParam } from "./utils.ts";
 
 import { protect } from "./index.ts";
 
@@ -24,7 +26,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();
 
     router.get("/:id", protect, async (req, res) => {
-        const safeId = safePathParam.safeParse(req.params.id);
+        const safeId = safePathParam.safeParse(getParam(req, "id"));
         if (!safeId.success) {
             res.sendStatus(400);
             return;
@@ -43,7 +45,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.get("/:id/details", protect, async (req, res) => {
-        const safeId = safePathParam.safeParse(req.params.id);
+        const safeId = safePathParam.safeParse(getParam(req, "id"));
         if (!safeId.success) {
             res.sendStatus(400);
             return;
@@ -77,7 +79,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
             return;
         }
 
-        const parsed = filePayload.safeParse(req.body);
+        const parsed = FilePayloadSchema.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
                 error: "Invalid file payload",
@@ -120,7 +122,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
             return;
         }
 
-        const parsed = filePayload.safeParse(req.body);
+        const parsed = FilePayloadSchema.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
                 error: "Invalid file payload",

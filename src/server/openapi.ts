@@ -2,9 +2,6 @@ import type express from "express";
 
 import swaggerUi from "swagger-ui-express";
 
-type AnyApp = express.Application & { _router?: { stack?: any[] } };
-type AnyRouter = express.Router & { stack?: any[] };
-
 interface IOpenApiOperation {
     responses: Record<string, { description: string }>;
     summary: string;
@@ -22,7 +19,22 @@ interface IOpenApiSpec {
 
 interface IRouterMount {
     basePath: string;
-    router: AnyRouter;
+    router: express.Router;
+}
+
+// Express internal layer shape — used only for runtime introspection of
+// the route stack.  We deliberately use loose types because Express does
+// not export these interfaces and they vary across major versions.
+interface RouteLayer {
+    handle?: { stack?: unknown[] };
+    route?: {
+        methods?: Record<string, boolean>;
+        path?: string;
+    };
+}
+
+function isRouteLayer(value: unknown): value is RouteLayer {
+    return typeof value === "object" && value !== null;
 }
 
 const normalizePath = (prefix: string, pathValue: string) => {
@@ -39,29 +51,49 @@ const addOperation = (
     openApiPath: string,
 ) => {
     const key = method.toLowerCase();
-    if (!paths[openApiPath]) {
-        paths[openApiPath] = {};
+    const existing = paths[openApiPath];
+    if (!existing) {
+        paths[openApiPath] = {
+            [key]: {
+                responses: {
+                    "200": { description: "Success" },
+                    "400": { description: "Bad request" },
+                    "401": { description: "Unauthorized" },
+                    "404": { description: "Not found" },
+                    "500": { description: "Server error" },
+                },
+                summary: `${method.toUpperCase()} ${openApiPath}`,
+            },
+        };
+    } else {
+        existing[key] = {
+            responses: {
+                "200": { description: "Success" },
+                "400": { description: "Bad request" },
+                "401": { description: "Unauthorized" },
+                "404": { description: "Not found" },
+                "500": { description: "Server error" },
+            },
+            summary: `${method.toUpperCase()} ${openApiPath}`,
+        };
     }
-    paths[openApiPath][key] = {
-        responses: {
-            "200": { description: "Success" },
-            "400": { description: "Bad request" },
-            "401": { description: "Unauthorized" },
-            "404": { description: "Not found" },
-            "500": { description: "Server error" },
-        },
-        summary: `${method.toUpperCase()} ${openApiPath}`,
-    };
 };
 
 const collectFromStack = (
-    stack: any[],
+    stack: unknown[],
     paths: IOpenApiSpec["paths"],
     prefix = "",
 ) => {
-    for (const layer of stack) {
-        if (layer?.route?.path && layer?.route?.methods) {
-            const routePath = layer.route.path as string;
+    for (const rawLayer of stack) {
+        if (!isRouteLayer(rawLayer)) continue;
+        const layer = rawLayer;
+
+        if (
+            layer.route &&
+            typeof layer.route.path === "string" &&
+            layer.route.methods
+        ) {
+            const routePath = layer.route.path;
             const openApiPath = normalizePath(prefix, routePath);
             const methods = Object.keys(layer.route.methods);
             for (const method of methods) {
@@ -70,25 +102,41 @@ const collectFromStack = (
             continue;
         }
 
-        if (layer?.handle?.stack && Array.isArray(layer.handle.stack)) {
+        if (layer.handle?.stack && Array.isArray(layer.handle.stack)) {
             collectFromStack(layer.handle.stack, paths, prefix);
         }
     }
 };
 
 const createOpenApiSpec = (
-    api: AnyApp,
+    api: express.Application,
     mountedRouters: IRouterMount[],
 ): IOpenApiSpec => {
     const paths: IOpenApiSpec["paths"] = {};
 
-    if (api._router?.stack && Array.isArray(api._router.stack)) {
-        collectFromStack(api._router.stack, paths);
+    // Access Express internal (undocumented) router stack for route introspection.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- introspecting undocumented Express internals
+    const appStack: unknown = (api as unknown as Record<string, unknown>)[
+        "_router"
+    ];
+    if (
+        typeof appStack === "object" &&
+        appStack !== null &&
+        "stack" in appStack &&
+        Array.isArray(appStack.stack)
+    ) {
+        collectFromStack(appStack.stack as unknown[], paths);
     }
 
     for (const { basePath, router } of mountedRouters) {
-        if (router.stack && Array.isArray(router.stack)) {
-            collectFromStack(router.stack, paths, basePath);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- introspecting undocumented Express internals
+        const r: Record<string, unknown> = router as unknown as Record<
+            string,
+            unknown
+        >;
+        const stack = r["stack"];
+        if (Array.isArray(stack)) {
+            collectFromStack(stack as unknown[], paths, basePath);
         }
     }
 
@@ -108,13 +156,11 @@ export const setupOpenApiDocs = (
     api: express.Application,
     mountedRouters: IRouterMount[],
 ) => {
-    const app = api as AnyApp;
-
-    app.get("/docs.json", (_req, res) => {
-        res.json(createOpenApiSpec(app, mountedRouters));
+    api.get("/docs.json", (_req, res) => {
+        res.json(createOpenApiSpec(api, mountedRouters));
     });
 
-    app.use(
+    api.use(
         "/docs",
         swaggerUi.serve,
         swaggerUi.setup(undefined, {
