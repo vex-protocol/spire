@@ -13,7 +13,7 @@
     "packageManager": "npm@10.9.2",
     "scripts": {
         "preinstall": "npx only-allow npm",
-        "start": "node --experimental-strip-types --no-warnings src/run.ts",
+        "start": "node --experimental-strip-types src/run.ts",
         "restart": "pm2 restart spire && pm2 logs spire",
         "build": "tsc",
         "format": "prettier --write .",
@@ -41,7 +41,7 @@
         "@types/swagger-ui-express": "^4.1.8",
         "@types/uuid": "^10.0.0",
         "@types/ws": "^8.5.10",
-        "@vex-chat/crypto": "^1.2.0-rc.1",
+        "@vex-chat/crypto": "^1.2.0-rc.2",
         "@vex-chat/types": "^2.0.0-rc.2",
         "@vitest/eslint-plugin": "^1.6.14",
         "eslint": "^10.1.0",
