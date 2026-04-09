@@ -23,15 +23,14 @@ import { EventEmitter } from "events";
 import { pbkdf2Sync } from "node:crypto";
 import * as fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { xMakeNonce, XUtils } from "@vex-chat/crypto";
 
 import BetterSqlite3 from "better-sqlite3";
 import {
+    FileMigrationProvider,
     Kysely,
-    type Migration,
-    type MigrationProvider,
     Migrator,
     sql,
     SqliteDialect,
@@ -793,26 +792,9 @@ export class Database extends EventEmitter {
     }
 
     private async init(): Promise<void> {
-        // pathToFileURL for Windows ESM compat
-        const provider: MigrationProvider = {
-            async getMigrations(): Promise<Record<string, Migration>> {
-                const files = await fs.readdir(migrationFolder);
-                const migrations: Record<string, Migration> = {};
-                for (const file of files) {
-                    if (!file.endsWith(".js") || file.endsWith(".d.ts"))
-                        continue;
-                    const key = file.replace(/\.[tj]s$/, "");
-                    const fullPath = path.join(migrationFolder, file);
-                    const url = pathToFileURL(fullPath).href;
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- dynamic import for migration files
-                    migrations[key] = await import(url);
-                }
-                return migrations;
-            },
-        };
         const migrator = new Migrator({
             db: this.db,
-            provider,
+            provider: new FileMigrationProvider({ fs, migrationFolder, path }),
         });
         const { error } = await migrator.migrateToLatest();
         if (error) {
