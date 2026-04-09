@@ -43,7 +43,7 @@
         "@types/uuid": "^10.0.0",
         "@types/ws": "^8.5.10",
         "@vex-chat/crypto": "^1.2.0-rc.1",
-        "@vex-chat/types": "^2.0.0-rc.1",
+        "@vex-chat/types": "^2.0.0-rc.2",
         "@vitest/eslint-plugin": "^1.6.14",
         "eslint": "^10.1.0",
         "eslint-config-prettier": "^10.1.8",
