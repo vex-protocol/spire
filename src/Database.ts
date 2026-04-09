@@ -125,9 +125,9 @@ export class Database extends EventEmitter {
 
         await this.db.insertInto("devices").values(device).execute();
 
-        const medPreKeys: PreKeysSQL = {
+        const medPreKeys = {
             deviceID: device.deviceID,
-            index: payload.preKeyIndex,
+            index: payload.preKeyIndex ?? 0,
             keyID: crypto.randomUUID(),
             publicKey: payload.preKey,
             signature: payload.preKeySignature,
@@ -813,9 +813,9 @@ export class Database extends EventEmitter {
         otks: PreKeysWS[],
     ): Promise<void> {
         for (const otk of otks) {
-            const newOTK: PreKeysSQL = {
+            const newOTK = {
                 deviceID: otk.deviceID,
-                index: otk.index,
+                index: otk.index ?? 0,
                 keyID: crypto.randomUUID(),
                 publicKey: XUtils.encodeHex(otk.publicKey),
                 signature: XUtils.encodeHex(otk.signature),

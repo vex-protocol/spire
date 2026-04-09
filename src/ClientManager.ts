@@ -253,7 +253,7 @@ export class ClientManager extends EventEmitter {
         switch (msg.resourceType) {
             case "mail":
                 if (msg.action === "CREATE") {
-                    const mail: MailWS = msg.data;
+                    const mail = msg.data as MailWS;
 
                     try {
                         await this.db.saveMail(
@@ -263,11 +263,11 @@ export class ClientManager extends EventEmitter {
                             this.getUser().userID,
                         );
                         this.log.info(
-                            "Received mail for " + msg.data.recipient,
+                            "Received mail for " + mail.recipient,
                         );
 
                         const deviceDetails = await this.db.retrieveDevice(
-                            msg.data.recipient,
+                            mail.recipient,
                         );
                         if (!deviceDetails) {
                             this.sendErr(
@@ -283,7 +283,7 @@ export class ClientManager extends EventEmitter {
                             "mail",
                             msg.transmissionID,
                             null,
-                            msg.data.recipient,
+                            mail.recipient,
                         );
                     } catch (err) {
                         this.log.error(err);
