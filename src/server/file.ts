@@ -114,6 +114,12 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
         res.send(msgpack.encode(newFile));
     });
 
+    // Multipart file upload — form fields are strings from multer, not full FilePayload
+    const multipartFields = z.object({
+        nonce: z.string().min(1),
+        owner: z.string().min(1),
+    });
+
     router.post("/", protect, multer().single("file"), async (req, res) => {
         const deviceDetails = req.device;
 
@@ -122,7 +128,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
             return;
         }
 
-        const parsed = FilePayloadSchema.safeParse(req.body);
+        const parsed = multipartFields.safeParse(req.body);
         if (!parsed.success) {
             res.status(400).json({
                 error: "Invalid file payload",
