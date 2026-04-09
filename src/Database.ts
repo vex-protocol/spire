@@ -604,7 +604,7 @@ export class Database extends EventEmitter {
     public async retrieveMail(
         deviceID: string,
         // tslint:disable-next-line: array-type
-    ): Promise<[Uint8Array, MailWS, Date][]> {
+    ): Promise<[Uint8Array, MailWS, string][]> {
         const rawRows = await this.db
             .selectFrom("mail")
             .selectAll()
@@ -612,7 +612,7 @@ export class Database extends EventEmitter {
             .execute();
         const rows: MailSQL[] = rawRows.map(toMailSQL);
 
-        const fixMail: (mail: MailSQL) => [Uint8Array, MailWS, Date] = (
+        const fixMail: (mail: MailSQL) => [Uint8Array, MailWS, string] = (
             mail,
         ) => {
             const msgb: MailWS = {
@@ -630,7 +630,7 @@ export class Database extends EventEmitter {
             };
 
             const msgh = XUtils.decodeHex(mail.header);
-            return [msgh, msgb, new Date(mail.time)];
+            return [msgh, msgb, mail.time];
         };
 
         const allMail = rows.map(fixMail);
