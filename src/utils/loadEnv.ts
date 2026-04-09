@@ -15,8 +15,8 @@ export function loadEnv(): void {
     ];
     for (const required of requiredEnvVars) {
         if (process.env[required] === undefined) {
-            console.warn(
-                `Required environment variable '${required}' is not set. Please consult the README.`,
+            process.stderr.write(
+                `Required environment variable '${required}' is not set. Please consult the README.\n`,
             );
             process.exit(1);
         }

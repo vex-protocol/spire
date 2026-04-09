@@ -1,5 +1,5 @@
 import type { Database } from "../Database.ts";
-import type { Device, FileSQL } from "@vex-chat/types";
+import type { FileSQL } from "@vex-chat/types";
 import type winston from "winston";
 
 import * as fs from "node:fs";
@@ -70,7 +70,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.post("/json", protect, async (req, res) => {
-        const deviceDetails: Device | undefined = (req as any).device;
+        const deviceDetails = req.device;
 
         if (!deviceDetails) {
             res.sendStatus(401);
@@ -113,7 +113,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.post("/", protect, multer().single("file"), async (req, res) => {
-        const deviceDetails: Device | undefined = (req as any).device;
+        const deviceDetails = req.device;
 
         if (!deviceDetails) {
             res.sendStatus(400);

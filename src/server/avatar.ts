@@ -1,9 +1,8 @@
 import type { Database } from "../Database.ts";
-import type { Device } from "@vex-chat/types";
-import type { User } from "@vex-chat/types";
 import type winston from "winston";
 
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 
 import express from "express";
 
@@ -54,8 +53,8 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
             return;
         }
         const payload = parsed.data;
-        const userDetails: User = (req as any).user;
-        const deviceDetails: Device | undefined = (req as any).device;
+        const userDetails = req.user!;
+        const deviceDetails = req.device;
 
         if (!deviceDetails) {
             res.sendStatus(401);
@@ -63,7 +62,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
         }
 
         if (!payload.file) {
-            console.warn("MISSING FILE");
+            log.warn("MISSING FILE");
             res.sendStatus(400);
             return;
         }
@@ -81,9 +80,8 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
 
         try {
             // write the file to disk
-            fs.writeFile("avatars/" + userDetails.userID, buf, () => {
-                log.info("Wrote new avatar " + userDetails.userID);
-            });
+            await fsp.writeFile("avatars/" + userDetails.userID, buf);
+            log.info("Wrote new avatar " + userDetails.userID);
             res.sendStatus(200);
         } catch (err: unknown) {
             log.warn(String(err));
@@ -96,8 +94,8 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
         protect,
         multer().single("avatar"),
         async (req, res) => {
-            const userDetails: User = (req as any).user;
-            const deviceDetails: Device | undefined = (req as any).device;
+            const userDetails = req.user!;
+            const deviceDetails = req.device;
 
             if (!deviceDetails) {
                 res.sendStatus(401);
@@ -105,7 +103,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
             }
 
             if (!req.file) {
-                console.warn("MISSING FILE");
+                log.warn("MISSING FILE");
                 res.sendStatus(400);
                 return;
             }
@@ -122,13 +120,8 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
 
             try {
                 // write the file to disk
-                fs.writeFile(
-                    "avatars/" + userDetails.userID,
-                    req.file.buffer,
-                    () => {
-                        log.info("Wrote new avatar " + userDetails.userID);
-                    },
-                );
+                await fsp.writeFile("avatars/" + userDetails.userID, req.file.buffer);
+                log.info("Wrote new avatar " + userDetails.userID);
                 res.sendStatus(200);
             } catch (err: unknown) {
                 log.warn(String(err));

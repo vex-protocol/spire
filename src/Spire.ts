@@ -266,7 +266,9 @@ export class Spire extends EventEmitter {
             const onFirstMessage = (data: ArrayBuffer | Buffer | Buffer[]) => {
                 const str = Buffer.isBuffer(data)
                     ? data.toString()
-                    : Buffer.from(data as ArrayBuffer).toString();
+                    : data instanceof ArrayBuffer
+                      ? Buffer.from(data).toString()
+                      : Buffer.concat(data).toString();
                 clearTimeout(timer);
                 ws.off("message", onFirstMessage);
 
@@ -424,23 +426,23 @@ export class Spire extends EventEmitter {
                     res.set("Content-Type", "application/msgpack");
                     return res.send(msgpack.encode(token));
                 } catch (err: unknown) {
-                    console.error(String(err));
+                    this.log.error(String(err));
                     return res.sendStatus(500);
                 }
             },
         );
 
         this.api.post("/whoami", async (req, res) => {
-            if (!(req as any).user) {
+            if (!req.user) {
                 res.sendStatus(401);
                 return;
             }
 
             res.send(
                 msgpack.encode({
-                    exp: (req as any).exp,
-                    token: (req as any).bearerToken,
-                    user: (req as any).user,
+                    exp: req.exp,
+                    token: req.bearerToken,
+                    user: req.user,
                 }),
             );
         });
@@ -479,8 +481,8 @@ export class Spire extends EventEmitter {
         });
 
         this.api.post("/goodbye", protect, async (req, res) => {
-            const token = jwt.sign(
-                { user: censorUser((req as any).user) },
+            jwt.sign(
+                { user: req.user },
                 getJwtSecret(),
                 { expiresIn: -1 },
             );
@@ -611,13 +613,12 @@ export class Spire extends EventEmitter {
         });
 
         this.api.post("/mail", protect, async (req, res) => {
-            const senderDeviceDetails: Device | undefined = (req as any)
-                .device;
+            const senderDeviceDetails = req.device;
             if (!senderDeviceDetails) {
                 res.sendStatus(401);
                 return;
             }
-            const authorUserDetails: User = (req as any).user;
+            const authorUserDetails = req.user!;
 
             const parsed = mailPostPayload.safeParse(req.body);
             if (!parsed.success) {
