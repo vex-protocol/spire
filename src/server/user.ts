@@ -1,12 +1,11 @@
 import type { Database } from "../Database.ts";
-import type { DevicePayload } from "@vex-chat/types";
 import type { User } from "@vex-chat/types";
 import type winston from "winston";
 
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { TokenScopes } from "@vex-chat/types";
+import { devicePayload, TokenScopes } from "@vex-chat/types";
 
 import nacl from "tweetnacl";
 import { stringify } from "uuid";
@@ -47,8 +46,8 @@ export const getUserRouter = (
                 "all",
             );
             res.send(msgpack.encode(permissions));
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
@@ -86,11 +85,19 @@ export const getUserRouter = (
 
     router.post("/:id/devices", protect, async (req, res) => {
         const userDetails = (req as any).user;
-        const devicePayload: DevicePayload = req.body;
+        const parsed = devicePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid device payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const deviceData = parsed.data;
 
         const token = nacl.sign.open(
-            XUtils.decodeHex(devicePayload.signed),
-            XUtils.decodeHex(devicePayload.signKey),
+            XUtils.decodeHex(deviceData.signed),
+            XUtils.decodeHex(deviceData.signKey),
         );
 
         if (!token) {
@@ -103,11 +110,11 @@ export const getUserRouter = (
             try {
                 const device = await db.createDevice(
                     userDetails.userID,
-                    devicePayload,
+                    deviceData,
                 );
                 res.send(msgpack.encode(device));
-            } catch (err) {
-                console.warn(err);
+            } catch (err: unknown) {
+                console.warn(String(err));
                 // failed registration due to signkey being taken
                 res.sendStatus(470);
                 return;

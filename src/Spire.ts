@@ -2,9 +2,7 @@ import type {
     ActionToken,
     BaseMsg,
     Device,
-    MailWS,
     NotifyMsg,
-    RegistrationPayload,
     User,
 } from "@vex-chat/types";
 import type { Server } from "http";
@@ -19,7 +17,14 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { TokenScopes } from "@vex-chat/types";
+import {
+    mailWS,
+    registrationPayload,
+    TokenScopes,
+    user as userSchema,
+} from "@vex-chat/types";
+
+import { z } from "zod/v4";
 
 import jwt from "jsonwebtoken";
 import nacl from "tweetnacl";
@@ -43,6 +48,38 @@ const STATUS_LATENCY_BUDGET_MS = 250;
 
 // 3-19 chars long
 const usernameRegex = /^(\w{3,19})$/;
+
+// ── Zod schemas for trust-boundary validation ──────────────────────────
+const wsAuthMsg = z.object({
+    token: z.string().min(1),
+    type: z.literal("auth"),
+});
+
+const jwtPayload = z.object({
+    bearerToken: z.string().optional(),
+    exp: z.number().optional(),
+    user: userSchema,
+});
+
+const authPayload = z.object({
+    password: z.string().min(1),
+    username: z.string().min(1),
+});
+
+const deviceAuthPayload = z.object({
+    deviceID: z.string().min(1),
+    signKey: z.string().min(1),
+});
+
+const deviceVerifyPayload = z.object({
+    challengeID: z.string().min(1),
+    signed: z.string().min(1),
+});
+
+const mailPostPayload = z.object({
+    header: z.custom<Uint8Array<any>>((val) => val instanceof Uint8Array),
+    mail: mailWS,
+});
 
 const directories = ["files", "avatars", "emoji"];
 for (const dir of directories) {
@@ -129,9 +166,10 @@ export class Spire extends EventEmitter {
         this.db = new Database(options);
         this.db.on("ready", () => {
             this.dbReady = true;
-            this.bootstrapRequestCounter().catch((err) => {
+            this.bootstrapRequestCounter().catch((err: unknown) => {
                 this.log.error(
-                    "Failed to load persisted request counter: " + err,
+                    "Failed to load persisted request counter: " +
+                        String(err),
                 );
             });
         });
@@ -233,15 +271,26 @@ export class Spire extends EventEmitter {
                 ws.off("message", onFirstMessage);
 
                 try {
-                    const parsed = JSON.parse(str);
-                    if (parsed.type !== "auth" || !parsed.token) {
+                    const rawParsed = JSON.parse(str);
+                    const authResult = wsAuthMsg.safeParse(rawParsed);
+                    if (!authResult.success) {
                         throw new Error(
-                            "Expected { type: 'auth', token }, got type=" +
-                                parsed.type,
+                            "Expected { type: 'auth', token }, got: " +
+                                JSON.stringify(authResult.error.issues),
                         );
                     }
-                    const result = jwt.verify(parsed.token, getJwtSecret());
-                    const userDetails: User = (result as any).user;
+                    const result = jwt.verify(
+                        authResult.data.token,
+                        getJwtSecret(),
+                    );
+                    const jwtResult = jwtPayload.safeParse(result);
+                    if (!jwtResult.success) {
+                        throw new Error(
+                            "Invalid JWT payload: " +
+                                JSON.stringify(jwtResult.error.issues),
+                        );
+                    }
+                    const userDetails: User = jwtResult.data.user;
 
                     this.log.info(
                         "WS auth succeeded for " + userDetails.username,
@@ -282,8 +331,8 @@ export class Spire extends EventEmitter {
                                 this.clients.length,
                         );
                     });
-                } catch (err) {
-                    this.log.warn("WS auth failed: " + err);
+                } catch (err: unknown) {
+                    this.log.warn("WS auth failed: " + String(err));
                     const errMsg: BaseMsg = {
                         transmissionID: crypto.randomUUID(),
                         type: "unauthorized",
@@ -374,8 +423,8 @@ export class Spire extends EventEmitter {
 
                     res.set("Content-Type", "application/msgpack");
                     return res.send(msgpack.encode(token));
-                } catch (err) {
-                    console.error(err.toString());
+                } catch (err: unknown) {
+                    console.error(String(err));
                     return res.sendStatus(500);
                 }
             },
@@ -442,15 +491,13 @@ export class Spire extends EventEmitter {
 
         this.api.post("/auth/device", async (req, res) => {
             try {
-                const { deviceID, signKey } = req.body as {
-                    deviceID: string;
-                    signKey: string;
-                };
-                if (!deviceID || !signKey) {
+                const parsed = deviceAuthPayload.safeParse(req.body);
+                if (!parsed.success) {
                     return res
                         .status(400)
                         .send({ error: "deviceID and signKey required." });
                 }
+                const { deviceID, signKey } = parsed.data;
 
                 const device = await this.db.retrieveDevice(deviceID);
                 if (!device || device.signKey !== signKey) {
@@ -475,23 +522,21 @@ export class Spire extends EventEmitter {
                 return res.send(
                     msgpack.encode({ challenge: nonce, challengeID }),
                 );
-            } catch (err) {
-                this.log.error("Device challenge error: " + err);
+            } catch (err: unknown) {
+                this.log.error("Device challenge error: " + String(err));
                 return res.sendStatus(500);
             }
         });
 
         this.api.post("/auth/device/verify", async (req, res) => {
             try {
-                const { challengeID, signed } = req.body as {
-                    challengeID: string;
-                    signed: string;
-                };
-                if (!challengeID || !signed) {
+                const parsed = deviceVerifyPayload.safeParse(req.body);
+                if (!parsed.success) {
                     return res.status(400).send({
                         error: "challengeID and signed required.",
                     });
                 }
+                const { challengeID, signed } = parsed.data;
 
                 const challenge = this.deviceChallenges.get(challengeID);
                 if (!challenge) {
@@ -559,8 +604,8 @@ export class Spire extends EventEmitter {
                 return res.send(
                     msgpack.encode({ token, user: censorUser(user) }),
                 );
-            } catch (err) {
-                this.log.error("Device verify error: " + err);
+            } catch (err: unknown) {
+                this.log.error("Device verify error: " + String(err));
                 return res.sendStatus(500);
             }
         });
@@ -574,8 +619,15 @@ export class Spire extends EventEmitter {
             }
             const authorUserDetails: User = (req as any).user;
 
-            const { header, mail }: { header: Uint8Array; mail: MailWS } =
-                req.body;
+            const parsed = mailPostPayload.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid mail payload",
+                    issues: parsed.error.issues,
+                });
+                return;
+            }
+            const { header, mail } = parsed.data;
 
             try {
                 await this.db.saveMail(
@@ -602,34 +654,24 @@ export class Spire extends EventEmitter {
                     null,
                     mail.recipient,
                 );
-            } catch (err) {
-                this.log.error(err);
-                res.status(500).send(err.toString());
+            } catch (err: unknown) {
+                this.log.error(String(err));
+                res.status(500).send(String(err));
             }
         });
 
         this.api.post("/auth", async (req, res) => {
-            const credentials: { password: string; username: string; } =
-                req.body;
-
-            if (typeof credentials.password !== "string") {
-                res.status(400).send(
-                    "Password is required and must be a string.",
-                );
+            const parsed = authPayload.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid credentials format",
+                });
                 return;
             }
-
-            if (typeof credentials.username !== "string") {
-                res.status(400).send(
-                    "Username is required and must be a string.",
-                );
-                return;
-            }
+            const { username, password } = parsed.data;
 
             try {
-                const userEntry = await this.db.retrieveUser(
-                    credentials.username,
-                );
+                const userEntry = await this.db.retrieveUser(username);
                 if (!userEntry) {
                     res.sendStatus(404);
                     this.log.warn("User does not exist.");
@@ -638,7 +680,7 @@ export class Spire extends EventEmitter {
 
                 const salt = XUtils.decodeHex(userEntry.passwordSalt);
                 const payloadHash = XUtils.encodeHex(
-                    hashPassword(credentials.password, salt),
+                    hashPassword(password, salt),
                 );
 
                 if (payloadHash !== userEntry.passwordHash) {
@@ -658,15 +700,23 @@ export class Spire extends EventEmitter {
                 res.send(
                     msgpack.encode({ token, user: censorUser(userEntry) }),
                 );
-            } catch (err) {
-                this.log.error(err.toString());
+            } catch (err: unknown) {
+                this.log.error(String(err));
                 res.sendStatus(500);
             }
         });
 
         this.api.post("/register", async (req, res) => {
             try {
-                const regPayload: RegistrationPayload = req.body;
+                const regParsed = registrationPayload.safeParse(req.body);
+                if (!regParsed.success) {
+                    res.status(400).json({
+                        error: "Invalid registration payload",
+                        issues: regParsed.error.issues,
+                    });
+                    return;
+                }
+                const regPayload = regParsed.data;
                 if (!usernameRegex.test(regPayload.username)) {
                     res.status(400).send({
                         error: "Username must be between three and nineteen letters, digits, or underscores.",
@@ -691,14 +741,20 @@ export class Spire extends EventEmitter {
                         regPayload,
                     );
                     if (err !== null) {
-                        switch ((err as any).code) {
+                        const errCode =
+                            typeof err === "object" &&
+                            err !== null &&
+                            "code" in err
+                                ? (err as { code: string }).code
+                                : undefined;
+                        switch (errCode) {
                             case "ER_DUP_ENTRY":
-                                const usernameConflict = err
-                                    .toString()
-                                    .includes("users_username_unique");
-                                const signKeyConflict = err
-                                    .toString()
-                                    .includes("users_signkey_unique");
+                                const usernameConflict = String(err).includes(
+                                    "users_username_unique",
+                                );
+                                const signKeyConflict = String(err).includes(
+                                    "users_signkey_unique",
+                                );
 
                                 this.log.warn(
                                     "User attempted to register duplicate account.",
@@ -721,10 +777,9 @@ export class Spire extends EventEmitter {
                                 break;
                             default:
                                 this.log.info(
-                                    "Unsupported sql error type: " +
-                                        (err as any).code,
+                                    "Unsupported sql error type: " + errCode,
                                 );
-                                this.log.error(err);
+                                this.log.error(String(err));
                                 res.sendStatus(500);
                                 break;
                         }
@@ -737,8 +792,8 @@ export class Spire extends EventEmitter {
                         error: "Invalid or no token supplied.",
                     });
                 }
-            } catch (err) {
-                this.log.error("error registering user: " + err.toString());
+            } catch (err: unknown) {
+                this.log.error("error registering user: " + String(err));
                 res.sendStatus(500);
             }
         });

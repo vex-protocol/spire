@@ -242,7 +242,7 @@ export class Database extends EventEmitter {
             await this.createDevice(user.userID, regPayload);
 
             return [user, null];
-        } catch (err) {
+        } catch (err: unknown) {
             return [null, err instanceof Error ? err : new Error(String(err))];
         }
     }
@@ -370,7 +370,7 @@ export class Database extends EventEmitter {
                 .where("index", "=", otk.index)
                 .execute();
             return otk;
-        } catch (err) {
+        } catch (err: unknown) {
             throw err;
         }
     }
@@ -434,8 +434,8 @@ export class Database extends EventEmitter {
         try {
             await sql`select 1 as ok`.execute(this.db);
             return true;
-        } catch (err) {
-            this.log.warn("Database health check failed: " + err);
+        } catch (err: unknown) {
+            this.log.warn("Database health check failed: " + String(err));
             return false;
         }
     }

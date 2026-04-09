@@ -1,5 +1,5 @@
 import type { Database } from "../Database.ts";
-import type { Device, FilePayload, FileSQL } from "@vex-chat/types";
+import type { Device, FileSQL } from "@vex-chat/types";
 import type winston from "winston";
 
 import * as fs from "node:fs";
@@ -9,18 +9,27 @@ import * as path from "node:path";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
+import { filePayload } from "@vex-chat/types";
 
 import multer from "multer";
+import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
 
 import { protect } from "./index.ts";
 
+const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
+
 export const getFileRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();
 
     router.get("/:id", protect, async (req, res) => {
-        const entry = await db.retrieveFile(req.params.id);
+        const safeId = safePathParam.safeParse(req.params.id);
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const entry = await db.retrieveFile(safeId.data);
         if (!entry) {
             res.sendStatus(404);
         } else {
@@ -34,7 +43,12 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.get("/:id/details", protect, async (req, res) => {
-        const entry = await db.retrieveFile(req.params.id);
+        const safeId = safePathParam.safeParse(req.params.id);
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const entry = await db.retrieveFile(safeId.data);
         if (!entry) {
             res.sendStatus(404);
         } else {
@@ -57,12 +71,21 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
 
     router.post("/json", protect, async (req, res) => {
         const deviceDetails: Device | undefined = (req as any).device;
-        const payload: FilePayload = req.body;
 
         if (!deviceDetails) {
             res.sendStatus(401);
             return;
         }
+
+        const parsed = filePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid file payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const payload = parsed.data;
 
         if (payload.nonce === "") {
             res.sendStatus(400);
@@ -91,12 +114,21 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
 
     router.post("/", protect, multer().single("file"), async (req, res) => {
         const deviceDetails: Device | undefined = (req as any).device;
-        const payload: FilePayload = req.body;
 
         if (!deviceDetails) {
             res.sendStatus(400);
             return;
         }
+
+        const parsed = filePayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid file payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const payload = parsed.data;
 
         if (req.file === undefined) {
             res.sendStatus(400);

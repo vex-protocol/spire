@@ -4,7 +4,6 @@ import type {
     ChallMsg,
     Device,
     ErrMsg,
-    MailWS,
     ReceiptMsg,
     ResourceMsg,
     RespMsg,
@@ -19,7 +18,7 @@ import { EventEmitter } from "events";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { xConcat, XUtils } from "@vex-chat/crypto";
-import { SocketAuthErrors } from "@vex-chat/types";
+import { mailWS, SocketAuthErrors } from "@vex-chat/types";
 
 import pc from "picocolors";
 import nacl from "tweetnacl";
@@ -114,8 +113,8 @@ export class ClientManager extends EventEmitter {
         this.log.debug(pc.bold(pc.red("OUT")), msg);
         try {
             this.conn.send(packedMessage);
-        } catch (err) {
-            this.log.warn(err.toString());
+        } catch (err: unknown) {
+            this.log.warn(String(err));
             this.fail();
         }
     }
@@ -253,7 +252,16 @@ export class ClientManager extends EventEmitter {
         switch (msg.resourceType) {
             case "mail":
                 if (msg.action === "CREATE") {
-                    const mail = msg.data as MailWS;
+                    const mailResult = mailWS.safeParse(msg.data);
+                    if (!mailResult.success) {
+                        this.sendErr(
+                            msg.transmissionID,
+                            "Invalid mail payload: " +
+                                JSON.stringify(mailResult.error.issues),
+                        );
+                        return;
+                    }
+                    const mail = mailResult.data;
 
                     try {
                         await this.db.saveMail(
@@ -285,9 +293,9 @@ export class ClientManager extends EventEmitter {
                             null,
                             mail.recipient,
                         );
-                    } catch (err) {
-                        this.log.error(err);
-                        this.sendErr(msg.transmissionID, err.toString());
+                    } catch (err: unknown) {
+                        this.log.error(String(err));
+                        this.sendErr(msg.transmissionID, String(err));
                     }
                 }
                 break;

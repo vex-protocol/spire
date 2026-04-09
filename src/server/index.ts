@@ -1,5 +1,5 @@
 import type { Database } from "../Database.ts";
-import type { Device, Emoji, PreKeysWS } from "@vex-chat/types";
+import type { Device, Emoji } from "@vex-chat/types";
 import type { User } from "@vex-chat/types";
 import type winston from "winston";
 
@@ -8,7 +8,13 @@ import * as fs from "node:fs";
 import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import { TokenScopes } from "@vex-chat/types";
+import {
+    devicePayload,
+    filePayload,
+    preKeysWS,
+    TokenScopes,
+    user as userSchema,
+} from "@vex-chat/types";
 
 import cors from "cors";
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
@@ -19,6 +25,7 @@ import multer from "multer";
 import parseDuration from "parse-duration";
 import nacl from "tweetnacl";
 import { stringify as uuidStringify } from "uuid";
+import { z } from "zod/v4";
 
 import { POWER_LEVELS } from "../ClientManager.ts";
 import { JWT_EXPIRY } from "../Spire.ts";
@@ -43,10 +50,45 @@ export const ALLOWED_IMAGE_TYPES = [
     "image/avif",
 ];
 
-interface IInvitePayload {
-    duration: string;
-    serverID: string;
-}
+// ── Zod schemas for trust-boundary validation ──────────────────────────
+const invitePayload = z.object({
+    duration: z.string().min(1),
+    serverID: z.string().min(1),
+});
+
+const channelPayload = z.object({
+    name: z.string().min(1).max(255),
+});
+
+const deviceListPayload = z.array(z.string());
+
+const connectPayload = z.object({
+    signed: z.custom<Uint8Array<any>>((val) => val instanceof Uint8Array),
+});
+
+const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
+
+const emojiPayload = z.object({
+    file: z.string().optional(),
+    name: z.string().min(1),
+    signed: z.string().optional(),
+});
+
+const jwtUserPayload = z.object({
+    exp: z.number().optional(),
+    user: userSchema,
+});
+
+const jwtDevicePayload = z.object({
+    device: z.object({
+        deleted: z.boolean(),
+        deviceID: z.string(),
+        lastLogin: z.string(),
+        name: z.string(),
+        owner: z.string(),
+        signKey: z.string(),
+    }),
+});
 
 /** Extract Bearer token from Authorization header. */
 function extractBearer(req: any): null | string {
@@ -55,29 +97,35 @@ function extractBearer(req: any): null | string {
     return header.slice(7);
 }
 
-const checkAuth = (req: any, res: any, next: () => void) => {
+const checkAuth = (req: any, _res: any, next: () => void) => {
     const token = extractBearer(req);
     if (token) {
         try {
             const result = jwt.verify(token, getJwtSecret());
-            req.user = (result as any).user;
-            req.exp = (result as any).exp;
-            req.bearerToken = token;
-        } catch (err) {
-            console.warn(err.toString());
+            const parsed = jwtUserPayload.safeParse(result);
+            if (parsed.success) {
+                req.user = parsed.data.user;
+                req.exp = parsed.data.exp;
+                req.bearerToken = token;
+            }
+        } catch (err: unknown) {
+            console.warn(String(err));
         }
     }
     next();
 };
 
-const checkDevice = (req: any, res: any, next: () => void) => {
+const checkDevice = (req: any, _res: any, next: () => void) => {
     const token = req.headers["x-device-token"];
     if (token) {
         try {
             const result = jwt.verify(token, getJwtSecret());
-            req.device = (result as any).device;
-        } catch (err) {
-            console.warn(err.toString());
+            const parsed = jwtDevicePayload.safeParse(result);
+            if (parsed.success) {
+                req.device = parsed.data.device;
+            }
+        } catch (err: unknown) {
+            console.warn(String(err));
         }
     }
     next();
@@ -172,7 +220,15 @@ export const initApp = (
     api.post("/server/:serverID/invites", protect, async (req, res) => {
         const userDetails: User = (req as any).user;
 
-        const payload: IInvitePayload = req.body;
+        const parsedPayload = invitePayload.safeParse(req.body);
+        if (!parsedPayload.success) {
+            res.status(400).json({
+                error: "Invalid invite payload",
+                issues: parsedPayload.error.issues,
+            });
+            return;
+        }
+        const payload = parsedPayload.data;
         const serverEntry = await db.retrieveServer(req.params.serverID);
 
         if (!serverEntry) {
@@ -270,7 +326,15 @@ export const initApp = (
         const userDetails: User = (req as any).user;
         const serverID = req.params.id;
         // resourceID is serverID
-        const { name } = req.body;
+        const parsedBody = channelPayload.safeParse(req.body);
+        if (!parsedBody.success) {
+            res.status(400).json({
+                error: "Invalid channel payload",
+                issues: parsedBody.error.issues,
+            });
+            return;
+        }
+        const { name } = parsedBody.data;
         const permissions = await db.retrievePermissions(
             userDetails.userID,
             "server",
@@ -345,8 +409,8 @@ export const initApp = (
             } else {
                 res.sendStatus(404);
             }
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
@@ -433,8 +497,8 @@ export const initApp = (
             }
             res.sendStatus(401);
             return;
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
@@ -464,15 +528,22 @@ export const initApp = (
                     );
                 }
             }
-        } catch (err) {
-            log.error(err.toString());
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            log.error(String(err));
+            res.status(500).send(String(err));
         }
     });
 
     api.post("/deviceList", protect, async (req, res) => {
-        const userIDs: string[] = req.body;
-        const devices = await db.retrieveUserDeviceList(userIDs);
+        const parsed = deviceListPayload.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Expected array of user ID strings",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const devices = await db.retrieveUserDeviceList(parsed.data);
         res.send(msgpack.encode(devices));
     });
 
@@ -508,13 +579,21 @@ export const initApp = (
         try {
             const inbox = await db.retrieveMail(deviceDetails.deviceID);
             res.send(msgpack.encode(inbox));
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
     api.post("/device/:id/connect", protect, async (req, res) => {
-        const { signed }: { signed: Uint8Array } = req.body;
+        const parsedBody = connectPayload.safeParse(req.body);
+        if (!parsedBody.success) {
+            res.status(400).json({
+                error: "Invalid connect payload",
+                issues: parsedBody.error.issues,
+            });
+            return;
+        }
+        const { signed } = parsedBody.data;
         const device = await db.retrieveDevice(req.params.id);
         if (!device) {
             res.sendStatus(404);
@@ -548,13 +627,21 @@ export const initApp = (
             const count = await db.getOTKCount(deviceDetails.deviceID);
             res.send(msgpack.encode({ count }));
             return;
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
     api.post("/device/:id/otk", protect, async (req, res) => {
-        const submittedOTKs: PreKeysWS[] = req.body;
+        const parsedOTKs = z.array(preKeysWS).safeParse(req.body);
+        if (!parsedOTKs.success) {
+            res.status(400).json({
+                error: "Invalid OTK payload",
+                issues: parsedOTKs.error.issues,
+            });
+            return;
+        }
+        const submittedOTKs = parsedOTKs.data;
         if (submittedOTKs.length === 0) {
             res.sendStatus(200);
             return;
@@ -584,8 +671,8 @@ export const initApp = (
         try {
             await db.saveOTK(userDetails.userID, deviceID, submittedOTKs);
             res.sendStatus(200);
-        } catch (err) {
-            res.status(500).send(err.toString());
+        } catch (err: unknown) {
+            res.status(500).send(String(err));
         }
     });
 
@@ -601,7 +688,12 @@ export const initApp = (
     });
 
     api.get("/emoji/:emojiID", protect, async (req, res) => {
-        const filePath = "./emoji/" + req.params.emojiID;
+        const safeId = safePathParam.safeParse(req.params.emojiID);
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const filePath = "./emoji/" + safeId.data;
         const typeDetails = await fileTypeFromFile(filePath).catch(() => null);
         if (!typeDetails) {
             res.sendStatus(404);
@@ -619,7 +711,15 @@ export const initApp = (
     });
 
     api.post("/emoji/:serverID/json", protect, async (req, res) => {
-        const payload: IEmojiPayload = req.body;
+        const parsedPayload = emojiPayload.safeParse(req.body);
+        if (!parsedPayload.success) {
+            res.status(400).json({
+                error: "Invalid emoji payload",
+                issues: parsedPayload.error.issues,
+            });
+            return;
+        }
+        const payload = parsedPayload.data;
 
         const userDetails: User = (req as any).user;
         const device: Device | undefined = (req as any).device;
@@ -629,7 +729,12 @@ export const initApp = (
             return;
         }
 
-        const buf = Buffer.from(XUtils.decodeBase64(payload.file!));
+        if (!payload.file) {
+            res.sendStatus(400);
+            return;
+        }
+
+        const buf = Buffer.from(XUtils.decodeBase64(payload.file));
         const serverEntry = await db.retrieveServer(req.params.serverID);
 
         const permissionList = await db.retrievePermissionsByResourceID(
@@ -686,8 +791,8 @@ export const initApp = (
                 log.info("Wrote new emoji " + emoji.emojiID);
             });
             res.send(msgpack.encode(emoji));
-        } catch (err) {
-            log.warn(err);
+        } catch (err: unknown) {
+            log.warn(String(err));
             res.sendStatus(500);
         }
     });
@@ -697,7 +802,15 @@ export const initApp = (
         protect,
         multer().single("emoji"),
         async (req, res) => {
-            const payload: IEmojiPayload = req.body;
+            const parsedPayload = emojiPayload.safeParse(req.body);
+            if (!parsedPayload.success) {
+                res.status(400).json({
+                    error: "Invalid emoji payload",
+                    issues: parsedPayload.error.issues,
+                });
+                return;
+            }
+            const payload = parsedPayload.data;
             const serverID = req.params.serverID;
             if (typeof serverID !== "string") {
                 res.sendStatus(400);
@@ -772,8 +885,8 @@ export const initApp = (
                     log.info("Wrote new emoji " + emoji.emojiID);
                 });
                 res.send(msgpack.encode(emoji));
-            } catch (err) {
-                log.warn(err);
+            } catch (err: unknown) {
+                log.warn(String(err));
                 res.sendStatus(500);
             }
         },
