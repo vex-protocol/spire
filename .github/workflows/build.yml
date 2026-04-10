@@ -3,11 +3,6 @@ name: Build
 on:
     pull_request:
         branches: [master]
-    # Kept for the `deploy-hook` job below — deploy fires on push to
-    # master only. Discussion of moving deploy-hook to release.yml or
-    # dropping the push trigger is deferred.
-    push:
-        branches: [master]
 
 concurrency:
     group: build-${{ github.event.pull_request.number || github.ref }}
@@ -176,33 +171,3 @@ jobs:
                   exit 1
             - name: All checks passed
               run: echo "All CI jobs succeeded."
-
-    # ── Deploy hook (unchanged) ────────────────────────────────────────────
-    #
-    # Fires on push to master after CI succeeds. This is spire's release
-    # mechanism — no npm publish, no changesets, just a webhook to the
-    # deploy target.
-
-    deploy-hook:
-        name: Trigger deploy hook
-        needs: ci-ok
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        runs-on: ubuntu-latest
-        steps:
-            - name: Harden Runner
-              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-              with:
-                  egress-policy: audit
-            - name: POST deploy endpoint
-              env:
-                  DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
-                  DEPLOY_HOOK_SECRET: ${{ secrets.DEPLOY_HOOK_SECRET }}
-              run: |
-                  if [ -z "$DEPLOY_HOOK_URL" ] || [ -z "$DEPLOY_HOOK_SECRET" ]; then
-                    echo "Deploy hook not configured; skipping."
-                    exit 0
-                  fi
-                  curl -sS -X POST "$DEPLOY_HOOK_URL" \
-                    -H "Authorization: Bearer ${DEPLOY_HOOK_SECRET}" \
-                    -H "Content-Type: application/json" \
-                    --data '{}' --fail
