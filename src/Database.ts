@@ -26,6 +26,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { xMakeNonce, XUtils } from "@vex-chat/crypto";
+import { MailType } from "@vex-chat/types";
+
+/**
+ * Narrow a plain integer from the `mailType` SQL column to the
+ * `MailType` union (0 = initial, 1 = subsequent). Throws if the
+ * database contains an unexpected value, catching row corruption
+ * at read time instead of propagating an invalid literal into
+ * application code.
+ */
+function parseMailType(n: number): MailType {
+    if (n === MailType.initial) return MailType.initial;
+    if (n === MailType.subsequent) return MailType.subsequent;
+    throw new Error(`Invalid mailType in database row: ${String(n)}`);
+}
 
 import BetterSqlite3 from "better-sqlite3";
 import {
@@ -835,6 +849,7 @@ function toMailSQL(row: {
         ...row,
         extra: row.extra ?? "",
         forward: Boolean(row.forward),
+        mailType: parseMailType(row.mailType),
         time: row.time,
     };
 }
