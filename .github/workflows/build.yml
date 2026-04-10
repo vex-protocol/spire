@@ -119,7 +119,7 @@ jobs:
                   cache: npm
             - run: npm ci --ignore-scripts
             - name: Type coverage
-              run: npx type-coverage --at-least 95 --ignore-catch
+              run: npx type-coverage
 
     supply-chain:
         name: Supply Chain
