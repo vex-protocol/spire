@@ -1,17 +1,35 @@
 name: Build
 
 on:
-    push:
-        branches: [master]
     pull_request:
         branches: [master]
+    # Kept for the `deploy-hook` job below — deploy fires on push to
+    # master only. Discussion of moving deploy-hook to release.yml or
+    # dropping the push trigger is deferred.
+    push:
+        branches: [master]
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+    group: build-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
 
 permissions:
     contents: read
 
+env:
+    npm_config_save_exact: "true"
+    npm_config_engine_strict: "true"
+
 jobs:
+    # ── Parallel checks ────────────────────────────────────────────────────
+    #
+    # `build` and `test` keep the ubuntu/macos/windows matrix because
+    # spire's runtime has caught real Windows-only issues in the past
+    # (native modules like better-sqlite3, path separator differences,
+    # case-sensitive filesystem mismatches). The lint/format/types/
+    # supply-chain jobs run on ubuntu only — they're deterministic
+    # across OSes.
+
     build:
         name: Build (${{ matrix.os }})
         runs-on: ${{ matrix.os }}
@@ -22,56 +40,152 @@ jobs:
                     - ubuntu-latest
                     - macos-latest
                     - windows-latest
-        env:
-            npm_config_save_exact: "true"
-            npm_config_engine_strict: "true"
+        steps:
+            - name: Harden Runner
+              if: runner.os == 'Linux'
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: tsc
+              run: npm run build
+
+    test:
+        name: Test (${{ matrix.os }})
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                os:
+                    - ubuntu-latest
+                    - macos-latest
+                    - windows-latest
+        steps:
+            - name: Harden Runner
+              if: runner.os == 'Linux'
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci
+            - name: Vitest
+              run: npm test
+
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
               with:
                   egress-policy: audit
-
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-            - name: Install mise
-              uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-
-            - name: Install dependencies
-              run: npm ci --ignore-scripts
-
-            - name: Build
-              run: npm run build
-
-            - name: Lint
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: ESLint
               run: npm run lint
-
-            - name: Format Check
+            - name: Prettier
               run: npm run format:check
-
-            - name: Test
-              run: npm test
-
-            - name: Type Coverage
-              run: npx type-coverage --at-least 95 --ignore-catch
-
-            - name: Lint package.json
+            - name: npm-package-json-lint
               run: npx npm-package-json-lint .
 
-            - name: Check dependency licenses
+    types:
+        name: Types
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: Type coverage
+              run: npx type-coverage --at-least 95 --ignore-catch
+
+    supply-chain:
+        name: Supply Chain
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+              with:
+                  node-version-file: .tool-versions
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - name: License check
               run: npm run license:check
-
-            - name: Security audit
+            - name: npm audit
               run: npm audit --audit-level=high
-
             - name: Socket security scan
               if: github.event.pull_request.head.repo.full_name == github.repository
               run: npx @socketsecurity/cli@latest ci
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
 
+    # ── Single aggregator — the only required status check ────────────────
+
+    ci-ok:
+        name: CI OK
+        if: always()
+        needs:
+            - build
+            - test
+            - lint
+            - types
+            - supply-chain
+        runs-on: ubuntu-latest
+        steps:
+            - name: Fail if any upstream job failed, was skipped, or cancelled
+              if: >-
+                  ${{ contains(needs.*.result, 'failure')
+                      || contains(needs.*.result, 'cancelled')
+                      || contains(needs.*.result, 'skipped') }}
+              run: |
+                  echo "One or more CI jobs did not succeed:"
+                  echo '${{ toJSON(needs) }}'
+                  exit 1
+            - name: All checks passed
+              run: echo "All CI jobs succeeded."
+
+    # ── Deploy hook (unchanged) ────────────────────────────────────────────
+    #
+    # Fires on push to master after CI succeeds. This is spire's release
+    # mechanism — no npm publish, no changesets, just a webhook to the
+    # deploy target.
+
     deploy-hook:
         name: Trigger deploy hook
-        needs: build
+        needs: ci-ok
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         runs-on: ubuntu-latest
         steps:
