@@ -27,8 +27,8 @@ export const setupDocs = (api: express.Application) => {
     api.get("/openapi.json", (_req, res) => { res.json(openApiSpec); });
     api.get("/asyncapi.json", (_req, res) => { res.json(asyncApiSpec); });
 
-    // Scalar — OpenAPI viewer
-    api.use("/docs", apiReference({ content: openApiSpec, theme: "purple" }));
+    // Scalar — OpenAPI viewer (fetch spec from URL, not inline — avoids large HTML)
+    api.use("/docs", apiReference({ url: "/openapi.json", theme: "purple" }));
 
     // Self-host the AsyncAPI web component JS from node_modules
     api.use(
