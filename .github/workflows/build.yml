@@ -63,6 +63,11 @@ jobs:
             - name: Security audit
               run: npm audit --audit-level=high || true
 
+            - name: Socket security scan
+              run: npx @socketsecurity/cli@latest ci
+              env:
+                  SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
+
     deploy-hook:
         name: Trigger deploy hook
         needs: build
