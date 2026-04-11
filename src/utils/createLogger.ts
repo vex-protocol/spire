@@ -5,7 +5,7 @@ import winston from "winston";
  */
 export function createLogger(logName: string, logLevel?: string) {
     const logger = winston.createLogger({
-        level: logLevel || "error",
+        defaultMeta: { service: "vex-" + logName },
         format: winston.format.combine(
             winston.format.timestamp({
                 format: "YYYY-MM-DD HH:mm:ss",
@@ -14,7 +14,7 @@ export function createLogger(logName: string, logLevel?: string) {
             winston.format.splat(),
             winston.format.json(),
         ),
-        defaultMeta: { service: "vex-" + logName },
+        level: logLevel || "error",
         transports: [
             //
             // - Write all logs with level `error` and below to `error.log`
@@ -31,8 +31,8 @@ export function createLogger(logName: string, logLevel?: string) {
     // `${info.level}: ${info.message} JSON.stringify({ ...rest }) `
     //
     if (
-        process.env.NODE_ENV !== "production" &&
-        process.env.NODE_ENV !== "test"
+        process.env["NODE_ENV"] !== "production" &&
+        process.env["NODE_ENV"] !== "test"
     ) {
         logger.add(
             new winston.transports.Console({

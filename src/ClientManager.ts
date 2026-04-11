@@ -1,41 +1,39 @@
-import { sleep } from "@extrahash/sleep";
-import { xConcat, XUtils } from "@vex-chat/crypto";
+import type { Database } from "./Database.ts";
 import type {
-    IBaseMsg,
-    IChallMsg,
-    IDevice,
-    IErrMsg,
-    IMailWS,
-    IReceiptMsg,
-    IResourceMsg,
-    IRespMsg,
-    ISucessMsg,
-    IUser,
-    IUserRecord,
+    BaseMsg,
+    ChallMsg,
+    Device,
+    ErrMsg,
+    ReceiptMsg,
+    ResourceMsg,
+    RespMsg,
+    SuccessMsg,
+    User,
+    UserRecord,
 } from "@vex-chat/types";
-import { SocketAuthErrors } from "@vex-chat/types";
-import chalk from "chalk";
-import { EventEmitter } from "events";
-import { msgpack } from "./utils/msgpack.ts";
-import nacl from "tweetnacl";
-import {
-    parse as uuidParse,
-    v4 as uuidv4,
-    validate as uuidValidate,
-} from "uuid";
-import winston from "winston";
-import WebSocket from "ws";
+import type winston from "winston";
+import type WebSocket from "ws";
 
-import { Database } from "./Database.ts";
-import { TOKEN_EXPIRY, type ISpireOptions } from "./Spire.ts";
+import { EventEmitter } from "events";
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { xConcat, XUtils } from "@vex-chat/crypto";
+import { xSignOpen } from "@vex-chat/crypto";
+import { MailWSSchema, SocketAuthErrors } from "@vex-chat/types";
+
+import pc from "picocolors";
+import { parse as uuidParse, validate as uuidValidate } from "uuid";
+
+import { type SpireOptions, TOKEN_EXPIRY } from "./Spire.ts";
 import { createLogger } from "./utils/createLogger.ts";
 import { createUint8UUID } from "./utils/createUint8UUID.ts";
+import { msgpack } from "./utils/msgpack.ts";
 
 export const POWER_LEVELS = {
-    INVITE: 25,
     CREATE: 50,
     DELETE: 50,
     EMOJI: 25,
+    INVITE: 25,
 };
 
 function emptyHeader() {
@@ -44,46 +42,31 @@ function emptyHeader() {
 
 const MAX_MSG_SIZE = 2048;
 
-function unpackMessage(msg: Buffer): [Uint8Array, IBaseMsg] {
-    const msgp = Uint8Array.from(msg);
-
-    const msgh = msgp.slice(0, 32);
-    const msgb: IBaseMsg = msgpack.decode(msgp.slice(32));
-
-    return [msgh, msgb];
-}
-
-function packMessage(msg: any, header?: Uint8Array) {
-    const msgb = Uint8Array.from(msgpack.encode(msg));
-    const msgh = header || emptyHeader();
-    return xConcat(msgh, msgb);
-}
-
 export class ClientManager extends EventEmitter {
-    private authed: boolean = false;
     private alive: boolean = true;
-    private conn: WebSocket;
+    private authed: boolean = false;
     private challengeID: Uint8Array = createUint8UUID();
-    private failed: boolean = false;
+    private conn: WebSocket;
     private db: Database;
-    private user: IUserRecord | null;
-    private userDetails: IUser;
-    private device: IDevice | null;
+    private device: Device | null;
+    private failed: boolean = false;
     private log: winston.Logger;
     private notify: (
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ) => void;
+    private user: null | UserRecord;
+    private userDetails: User;
 
     constructor(
         ws: WebSocket,
         db: Database,
         notify: (userID: string, event: string, transmissionID: string) => void,
-        userDetails: IUser,
-        options?: ISpireOptions,
+        userDetails: User,
+        options?: SpireOptions,
     ) {
         super();
         this.conn = ws;
@@ -98,6 +81,47 @@ export class ClientManager extends EventEmitter {
         this.challenge();
     }
 
+    public getDevice(): Device {
+        if (!this.device) {
+            throw new Error("No device set on this client.");
+        }
+        return this.device;
+    }
+
+    public getUser(): UserRecord {
+        if (!this.authed || !this.user) {
+            throw new Error("You must be authed before getting user info.");
+        }
+        return this.user;
+    }
+
+    public send(msg: BaseMsg, header?: Uint8Array) {
+        if (header) {
+            this.log.debug(pc.bold(pc.red("OUTH")), header.toString());
+        } else {
+            this.log.debug(pc.bold(pc.red("OUTH")), emptyHeader.toString());
+        }
+
+        const packedMessage = packMessage(msg, header);
+
+        this.log.info(
+            pc.bold("⟶   ") +
+                responseColor(msg.type.toUpperCase()) +
+                " " +
+                this.toString() +
+                " " +
+                pc.yellow(Buffer.byteLength(packedMessage)),
+        );
+
+        this.log.debug(pc.bold(pc.red("OUT")), msg);
+        try {
+            this.conn.send(packedMessage);
+        } catch (err: unknown) {
+            this.log.warn(String(err));
+            this.fail();
+        }
+    }
+
     public override toString() {
         if (!this.user || !this.device) {
             return "Unauthorized#0000";
@@ -105,184 +129,135 @@ export class ClientManager extends EventEmitter {
         return this.user.username + "<" + this.getDevice().deviceID + ">";
     }
 
-    public getUser(): IUserRecord {
-        if (!this.authed) {
-            throw new Error("You must be authed before getting user info.");
-        }
-        return this.user!;
-    }
-
-    public async send(msg: any, header?: Uint8Array) {
-        if (header) {
-            this.log.debug(chalk.red.bold("OUTH"), header.toString());
-        } else {
-            this.log.debug(chalk.red.bold("OUTH"), emptyHeader.toString());
-        }
-
-        const packedMessage = packMessage(msg, header);
-
-        this.log.info(
-            chalk.bold("⟶   ") +
-                responseColor(msg.type.toUpperCase()) +
-                " " +
-                this.toString() +
-                " " +
-                chalk.yellow(Buffer.byteLength(packedMessage)),
-        );
-
-        this.log.debug(chalk.red.bold("OUT"), msg);
-        try {
-            this.conn.send(packedMessage);
-        } catch (err) {
-            this.log.warn(err.toString());
-            this.fail();
-        }
-    }
-
-    public getDevice(): IDevice {
-        return this.device!;
-    }
-
     private authorize(transmissionID: string) {
         this.authed = true;
         this.sendAuthedMessage(transmissionID);
-        this.db.markDeviceLogin(this.getDevice());
+        void this.db.markDeviceLogin(this.getDevice());
         this.emit("authed");
+    }
+
+    private challenge() {
+        this.challengeID = new Uint8Array(uuidParse(crypto.randomUUID()));
+        const challenge: ChallMsg = {
+            challenge: this.challengeID,
+            transmissionID: crypto.randomUUID(),
+            type: "challenge",
+        };
+        this.send(challenge);
     }
 
     private fail() {
         if (this.failed) {
             return;
         }
-        if (this.conn) {
-            this.log.warn("Connection closed.");
-            this.conn.close();
-        }
+        this.log.warn("Connection closed.");
+        this.conn.close();
         this.failed = true;
         this.emit("fail");
     }
 
-    private setAlive(status: boolean) {
-        this.alive = status;
+    private async handleReceipt(msg: ReceiptMsg) {
+        await this.db.deleteMail(msg.nonce, this.getDevice().deviceID);
     }
 
-    private async pingLoop() {
-        while (true) {
-            this.ping();
-            await sleep(5000);
-        }
-    }
-
-    private ping() {
-        if (!this.alive) {
-            this.fail();
-            return;
-        }
-        this.setAlive(false);
-        const p = { transmissionID: uuidv4(), type: "ping" };
-        this.send(p);
-    }
-
-    private pong(transmissionID: string) {
-        // ping is allowed before auth
-        if (this.user) {
-            this.db.markUserSeen(this.user);
-        }
-
-        const p = { transmissionID, type: "pong" };
-        this.send(p);
-    }
-
-    private async verifyResponse(msg: IRespMsg) {
-        const user = await this.db.retrieveUser(this.userDetails.userID);
-        if (user) {
-            const devices = await this.db.retrieveUserDeviceList([user.userID]);
-            let message: Uint8Array | null = null;
-            for (const device of devices) {
-                const verified = nacl.sign.open(
-                    msg.signed,
-                    XUtils.decodeHex(device.signKey),
-                );
-                if (verified) {
-                    message = verified;
-                    this.device = device;
+    private initListeners() {
+        this.conn.on("open", () => {
+            setTimeout(() => {
+                if (!this.authed) {
+                    this.conn.close();
                 }
-            }
-            if (!message) {
-                this.log.warn("Signature verification failed!");
-                this.sendAuthError(SocketAuthErrors.BadSignature);
-                this.fail();
+            }, TOKEN_EXPIRY);
+            void this.pingLoop();
+        });
+        this.conn.on("close", () => {
+            this.fail();
+        });
+        this.conn.on("message", (message: Buffer) => {
+            const [header, msg] = unpackMessage(message);
+            const size = Buffer.byteLength(message);
+
+            if (size > MAX_MSG_SIZE) {
+                this.sendErr(
+                    msg.transmissionID,
+                    "Message is too big. Received size " +
+                        String(size) +
+                        " while max size is " +
+                        String(MAX_MSG_SIZE),
+                );
                 return;
             }
 
-            if (
-                XUtils.bytesEqual(
-                    this.challengeID as Uint8Array,
-                    message as Uint8Array,
-                )
-            ) {
-                this.user = user;
-                this.authorize(msg.transmissionID);
-            } else {
-                this.log.warn("Token is bad!");
-                this.sendAuthError(SocketAuthErrors.InvalidToken);
+            this.log.info(
+                pc.bold("⟵   ") +
+                    pc.bold(msg.type.toUpperCase()) +
+                    " " +
+                    this.toString() +
+                    " " +
+                    pc.yellow(String(size)),
+            );
+            this.log.debug(pc.bold(pc.red("INH")), header.toString());
+            this.log.debug(pc.bold(pc.red("IN")), msg);
+
+            if (!msg.type) {
+                this.sendErr(msg.transmissionID, "Message type is required.");
+                return;
             }
-        } else {
-            this.log.info("User is not registered.");
-            this.sendAuthError(SocketAuthErrors.UserNotRegistered);
 
-            this.fail();
-        }
+            if (!uuidValidate(msg.transmissionID)) {
+                this.sendErr(
+                    crypto.randomUUID(),
+                    "transmissionID is required and must be a valid uuid.",
+                );
+                return;
+            }
+
+            switch (msg.type) {
+                case "ping":
+                    this.pong(msg.transmissionID);
+                    break;
+                case "pong":
+                    this.setAlive(true);
+                    break;
+                case "receipt":
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.handleReceipt(msg as ReceiptMsg);
+                    break;
+                case "resource":
+                    if (!this.authed) {
+                        this.sendErr(
+                            msg.transmissionID,
+                            "You are not authenticated.",
+                        );
+                        break;
+                    }
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.parseResourceMsg(msg as ResourceMsg, header);
+                    break;
+                case "response":
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- narrowed by msg.type
+                    void this.verifyResponse(msg as RespMsg);
+                    break;
+                default:
+                    this.log.info("unsupported message %s", msg.type);
+                    break;
+            }
+        });
     }
 
-    private challenge() {
-        this.challengeID = new Uint8Array(uuidParse(uuidv4()));
-        const challenge: IChallMsg = {
-            transmissionID: uuidv4(),
-            type: "challenge",
-            challenge: this.challengeID,
-        };
-        this.send(challenge);
-    }
-
-    private sendErr(transmissionID: string, message: string, data?: any) {
-        const error: IErrMsg = {
-            transmissionID,
-            type: "error",
-            error: message,
-            data,
-        };
-        this.send(error);
-    }
-
-    private sendAuthError(error: SocketAuthErrors) {
-        this.send({ type: "authErr", error });
-    }
-
-    private sendAuthedMessage(transmissionID: string) {
-        this.send({ type: "authorized", transmissionID });
-    }
-
-    private sendSuccess(
-        transmissionID: string,
-        data: any,
-        header?: Uint8Array,
-        timestamp?: string,
-    ) {
-        const msg: ISucessMsg = {
-            transmissionID,
-            type: "success",
-            data,
-            timestamp,
-        };
-        this.send(msg, header);
-    }
-
-    private async parseResourceMsg(msg: IResourceMsg, header: Uint8Array) {
+    private async parseResourceMsg(msg: ResourceMsg, header: Uint8Array) {
         switch (msg.resourceType) {
             case "mail":
                 if (msg.action === "CREATE") {
-                    const mail: IMailWS = msg.data;
+                    const mailResult = MailWSSchema.safeParse(msg.data);
+                    if (!mailResult.success) {
+                        this.sendErr(
+                            msg.transmissionID,
+                            "Invalid mail payload: " +
+                                JSON.stringify(mailResult.error.issues),
+                        );
+                        return;
+                    }
+                    const mail = mailResult.data;
 
                     try {
                         await this.db.saveMail(
@@ -291,12 +266,10 @@ export class ClientManager extends EventEmitter {
                             this.getDevice().deviceID,
                             this.getUser().userID,
                         );
-                        this.log.info(
-                            "Received mail for " + msg.data.recipient,
-                        );
+                        this.log.info("Received mail for " + mail.recipient);
 
                         const deviceDetails = await this.db.retrieveDevice(
-                            msg.data.recipient,
+                            mail.recipient,
                         );
                         if (!deviceDetails) {
                             this.sendErr(
@@ -312,11 +285,11 @@ export class ClientManager extends EventEmitter {
                             "mail",
                             msg.transmissionID,
                             null,
-                            msg.data.recipient,
+                            mail.recipient,
                         );
-                    } catch (err) {
-                        this.log.error(err);
-                        this.sendErr(msg.transmissionID, err.toString());
+                    } catch (err: unknown) {
+                        this.log.error(String(err));
+                        this.sendErr(msg.transmissionID, String(err));
                     }
                 }
                 break;
@@ -325,121 +298,136 @@ export class ClientManager extends EventEmitter {
         }
     }
 
-    private async handleReceipt(msg: IReceiptMsg) {
-        await this.db.deleteMail(msg.nonce, this.getDevice().deviceID);
+    private ping() {
+        if (!this.alive) {
+            this.fail();
+            return;
+        }
+        this.setAlive(false);
+        const p = { transmissionID: crypto.randomUUID(), type: "ping" };
+        this.send(p);
     }
 
-    private initListeners() {
-        this.conn.on("open", () => {
-            setTimeout(() => {
-                if (!this.authed) {
-                    this.conn.close();
+    private async pingLoop() {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite loop
+        while (true) {
+            this.ping();
+            await sleep(5000);
+        }
+    }
+
+    private pong(transmissionID: string) {
+        // ping is allowed before auth
+        if (this.user) {
+            void this.db.markUserSeen(this.user);
+        }
+
+        const p = { transmissionID, type: "pong" };
+        this.send(p);
+    }
+
+    private sendAuthedMessage(transmissionID: string) {
+        this.send({ transmissionID, type: "authorized" });
+    }
+
+    private sendAuthError(error: SocketAuthErrors) {
+        const msg = {
+            error,
+            transmissionID: crypto.randomUUID(),
+            type: "authErr",
+        };
+        this.send(msg);
+    }
+
+    private sendErr(transmissionID: string, message: string, data?: unknown) {
+        const error: ErrMsg = {
+            data,
+            error: message,
+            transmissionID,
+            type: "error",
+        };
+        this.send(error);
+    }
+
+    private sendSuccess(
+        transmissionID: string,
+        data: unknown,
+        header?: Uint8Array,
+        timestamp?: string,
+    ) {
+        const msg: SuccessMsg = {
+            data,
+            timestamp,
+            transmissionID,
+            type: "success",
+        };
+        this.send(msg, header);
+    }
+
+    private setAlive(status: boolean) {
+        this.alive = status;
+    }
+
+    private async verifyResponse(msg: RespMsg) {
+        const user = await this.db.retrieveUser(this.userDetails.userID);
+        if (user) {
+            const devices = await this.db.retrieveUserDeviceList([user.userID]);
+            let message: null | Uint8Array = null;
+            for (const device of devices) {
+                const verified = xSignOpen(
+                    msg.signed,
+                    XUtils.decodeHex(device.signKey),
+                );
+                if (verified) {
+                    message = verified;
+                    this.device = device;
                 }
-            }, TOKEN_EXPIRY);
-            this.pingLoop();
-        });
-        this.conn.on("close", () => {
+            }
+            if (!message) {
+                this.log.warn("Signature verification failed!");
+                this.sendAuthError(SocketAuthErrors.BadSignature);
+                this.fail();
+                return;
+            }
+
+            if (XUtils.bytesEqual(this.challengeID, message)) {
+                this.user = user;
+                this.authorize(msg.transmissionID);
+            } else {
+                this.log.warn("Token is bad!");
+                this.sendAuthError(SocketAuthErrors.InvalidToken);
+            }
+        } else {
+            this.log.info("User is not registered.");
+            this.sendAuthError(SocketAuthErrors.UserNotRegistered);
+
             this.fail();
-        });
-        this.conn.on("message", (message: Buffer) => {
-            const [header, msg] = unpackMessage(message);
-            const size = Buffer.byteLength(message);
-
-            if (size > MAX_MSG_SIZE) {
-                this.sendErr(
-                    msg.transmissionID,
-                    "Message is too big. Received size " +
-                        size +
-                        " while max size is " +
-                        MAX_MSG_SIZE,
-                );
-                return;
-            }
-
-            this.log.info(
-                chalk.bold("⟵   ") +
-                    (msg.type === "resource"
-                        ? crudColor(
-                              (msg as IResourceMsg).action.toUpperCase(),
-                          ) +
-                          " " +
-                          chalk.bold(
-                              (msg as IResourceMsg).resourceType.toUpperCase(),
-                          )
-                        : chalk.bold(msg.type.toUpperCase())) +
-                    " " +
-                    this.toString() +
-                    " " +
-                    chalk.yellow(size),
-            );
-            this.log.debug(chalk.red.bold("INH"), header.toString());
-            this.log.debug(chalk.red.bold("IN"), msg);
-
-            if (!msg.type) {
-                this.sendErr(msg.transmissionID, "Message type is required.");
-                return;
-            }
-
-            if (!uuidValidate(msg.transmissionID)) {
-                this.sendErr(
-                    uuidv4(),
-                    "transmissionID is required and must be a valid uuid.",
-                );
-                return;
-            }
-
-            switch (msg.type) {
-                case "receipt":
-                    this.handleReceipt(msg as IReceiptMsg);
-                    break;
-                case "resource":
-                    if (!this.authed) {
-                        this.sendErr(
-                            msg.transmissionID,
-                            "You are not authenticated.",
-                        );
-                        break;
-                    }
-                    this.parseResourceMsg(msg as IResourceMsg, header);
-                    break;
-                case "response":
-                    this.verifyResponse(msg as IRespMsg);
-                    break;
-                case "ping":
-                    this.pong(msg.transmissionID);
-                    break;
-                case "pong":
-                    this.setAlive(true);
-                    break;
-                default:
-                    this.log.info("unsupported message %s", msg.type);
-                    break;
-            }
-        });
+        }
     }
 }
 
-const crudColor = (action: string): string => {
-    switch (action) {
-        case "CREATE":
-            return chalk.yellow.bold(action);
-        case "RETRIEVE":
-            return chalk.yellow.bold(action);
-        case "UPDATE":
-            return chalk.cyan.bold(action);
-        case "DELETE":
-            return chalk.red.bold(action);
-        default:
-            return action;
-    }
-};
+function packMessage(msg: unknown, header?: Uint8Array) {
+    const msgb = Uint8Array.from(msgpack.encode(msg));
+    const msgh = header || emptyHeader();
+    return xConcat(msgh, msgb);
+}
+
+function unpackMessage(msg: Buffer): [Uint8Array, BaseMsg] {
+    const msgp = Uint8Array.from(msg);
+
+    const msgh = msgp.slice(0, 32);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- msgpack.decode returns any
+    const msgb: BaseMsg = msgpack.decode(msgp.slice(32));
+
+    return [msgh, msgb];
+}
 
 const responseColor = (status: string): string => {
     switch (status) {
-        case "SUCCESS":
-            return chalk.green.bold(status);
         case "ERROR":
-            return chalk.red.bold(status);
+            return pc.bold(pc.red(status));
+        case "SUCCESS":
+            return pc.bold(pc.green(status));
         default:
             return status;
     }

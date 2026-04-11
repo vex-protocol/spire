@@ -1,125 +1,51 @@
-import type express from "express";
-import swaggerUi from "swagger-ui-express";
+/**
+ * API documentation endpoints (development only).
+ *
+ * - GET /docs        — Scalar OpenAPI viewer (REST API)
+ * - GET /async-docs  — AsyncAPI web component viewer (WebSocket protocol)
+ * - GET /openapi.json  — raw OpenAPI 3.1 spec
+ * - GET /asyncapi.json — raw AsyncAPI 3.0 spec
+ *
+ * Specs are generated at build time from Zod schemas in @vex-chat/types.
+ * The interactive viewers require unsafe-eval (AJV) and CDN scripts (Scalar),
+ * so they are disabled in production. Raw JSON specs are always available.
+ */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-type AnyRouter = express.Router & { stack?: any[] };
-type AnyApp = express.Application & { _router?: { stack?: any[] } };
+import express from "express";
 
-interface IRouterMount {
-    basePath: string;
-    router: AnyRouter;
-}
+import asyncApiSpec from "@vex-chat/types/asyncapi.json" with { type: "json" };
+import openApiSpec from "@vex-chat/types/openapi.json" with { type: "json" };
 
-interface IOpenApiOperation {
-    summary: string;
-    responses: Record<string, { description: string }>;
-}
+import { apiReference } from "@scalar/express-api-reference";
 
-interface IOpenApiSpec {
-    openapi: string;
-    info: {
-        title: string;
-        version: string;
-        description: string;
-    };
-    paths: Record<string, Record<string, IOpenApiOperation>>;
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isProduction = process.env["NODE_ENV"] === "production";
 
-const normalizePath = (prefix: string, pathValue: string) => {
-    const combined = `${prefix}/${pathValue}`.replace(/\/+/g, "/");
-    const withParams = combined.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
-    return withParams.endsWith("/") && withParams.length > 1
-        ? withParams.slice(0, -1)
-        : withParams;
-};
+const pkgDir = (pkg: string) =>
+    path.resolve(__dirname, "../../node_modules", pkg);
 
-const addOperation = (
-    paths: IOpenApiSpec["paths"],
-    method: string,
-    openApiPath: string,
-) => {
-    const key = method.toLowerCase();
-    if (!paths[openApiPath]) {
-        paths[openApiPath] = {};
-    }
-    paths[openApiPath][key] = {
-        summary: `${method.toUpperCase()} ${openApiPath}`,
-        responses: {
-            "200": { description: "Success" },
-            "400": { description: "Bad request" },
-            "401": { description: "Unauthorized" },
-            "404": { description: "Not found" },
-            "500": { description: "Server error" },
-        },
-    };
-};
-
-const collectFromStack = (
-    stack: any[],
-    paths: IOpenApiSpec["paths"],
-    prefix = "",
-) => {
-    for (const layer of stack) {
-        if (layer?.route?.path && layer?.route?.methods) {
-            const routePath = layer.route.path as string;
-            const openApiPath = normalizePath(prefix, routePath);
-            const methods = Object.keys(layer.route.methods) as string[];
-            for (const method of methods) {
-                addOperation(paths, method, openApiPath);
-            }
-            continue;
-        }
-
-        if (layer?.handle?.stack && Array.isArray(layer.handle.stack)) {
-            collectFromStack(layer.handle.stack, paths, prefix);
-        }
-    }
-};
-
-const createOpenApiSpec = (
-    api: AnyApp,
-    mountedRouters: IRouterMount[],
-): IOpenApiSpec => {
-    const paths: IOpenApiSpec["paths"] = {};
-
-    if (api._router?.stack && Array.isArray(api._router.stack)) {
-        collectFromStack(api._router.stack, paths);
-    }
-
-    for (const { basePath, router } of mountedRouters) {
-        if (router.stack && Array.isArray(router.stack)) {
-            collectFromStack(router.stack, paths, basePath);
-        }
-    }
-
-    return {
-        openapi: "3.1.0",
-        info: {
-            title: "Spire API",
-            version: "1.0.0",
-            description:
-                "Auto-generated endpoint reference for the Spire Express API.",
-        },
-        paths,
-    };
-};
-
-export const setupOpenApiDocs = (
-    api: express.Application,
-    mountedRouters: IRouterMount[],
-) => {
-    const app = api as AnyApp;
-
-    app.get("/docs.json", (_req, res) => {
-        res.json(createOpenApiSpec(app, mountedRouters));
+export const setupDocs = (api: express.Application) => {
+    // Raw JSON specs — always available (no CSP issues, machine-readable)
+    api.get("/openapi.json", (_req, res) => {
+        res.json(openApiSpec);
+    });
+    api.get("/asyncapi.json", (_req, res) => {
+        res.json(asyncApiSpec);
     });
 
-    app.use(
-        "/docs",
-        swaggerUi.serve,
-        swaggerUi.setup(undefined, {
-            swaggerOptions: {
-                url: "/docs.json",
-            },
-        }),
+    if (isProduction) return;
+
+    // Interactive viewers — development only (require unsafe-eval + CDN)
+    api.use("/docs", apiReference({ theme: "purple", url: "/openapi.json" }));
+    api.use("/vendor", express.static(pkgDir("@asyncapi/web-component/lib")));
+    api.use(
+        "/assets",
+        express.static(pkgDir("@asyncapi/react-component/styles")),
     );
+
+    api.get("/async-docs", (_req, res) => {
+        res.sendFile(path.resolve(__dirname, "../../public/async-docs.html"));
+    });
 };

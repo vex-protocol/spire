@@ -1,16 +1,19 @@
-import { XUtils } from "@vex-chat/crypto";
-import type { IDevicePayload } from "@vex-chat/types";
-import { TokenScopes } from "@vex-chat/types";
+import type { Database } from "../Database.ts";
+import type winston from "winston";
+
 import express from "express";
-import nacl from "tweetnacl";
+
+import { XUtils } from "@vex-chat/crypto";
+import { xSignOpen } from "@vex-chat/crypto";
+import { DevicePayloadSchema, TokenScopes } from "@vex-chat/types";
+
 import { stringify } from "uuid";
-import winston from "winston";
-import { protect } from "./index.ts";
 
 import { msgpack } from "../utils/msgpack.ts";
-import { Database } from "../Database.ts";
-import type { IUser } from "@vex-chat/types";
-import { censorUser } from "./utils.ts";
+
+import { censorUser, getParam, getUser } from "./utils.ts";
+
+import { protect } from "./index.ts";
 
 export const getUserRouter = (
     db: Database,
@@ -20,7 +23,7 @@ export const getUserRouter = (
     const router = express.Router();
 
     router.get("/:id", protect, async (req, res) => {
-        const user = await db.retrieveUser(req.params.id);
+        const user = await db.retrieveUser(getParam(req, "id"));
 
         if (user) {
             return res.send(msgpack.encode(censorUser(user)));
@@ -30,37 +33,35 @@ export const getUserRouter = (
     });
 
     router.get("/:id/devices", protect, async (req, res) => {
-        const deviceList = await db.retrieveUserDeviceList([req.params.id]);
+        const deviceList = await db.retrieveUserDeviceList([
+            getParam(req, "id"),
+        ]);
         return res.send(msgpack.encode(deviceList));
     });
 
     router.get("/:id/permissions", protect, async (req, res) => {
-        const userDetails: IUser = (req as any).user;
-        try {
-            const permissions = await db.retrievePermissions(
-                userDetails.userID,
-                "all",
-            );
-            res.send(msgpack.encode(permissions));
-        } catch (err) {
-            res.status(500).send(err.toString());
-        }
+        const userDetails = getUser(req);
+        const permissions = await db.retrievePermissions(
+            userDetails.userID,
+            "all",
+        );
+        res.send(msgpack.encode(permissions));
     });
 
     router.get("/:id/servers", protect, async (req, res) => {
-        const userDetails: IUser = (req as any).user;
+        const userDetails = getUser(req);
         const servers = await db.retrieveServers(userDetails.userID);
         res.send(msgpack.encode(servers));
     });
 
     router.delete("/:userID/devices/:deviceID", protect, async (req, res) => {
-        const device = await db.retrieveDevice(req.params.deviceID);
+        const device = await db.retrieveDevice(getParam(req, "deviceID"));
 
         if (!device) {
             res.sendStatus(404);
             return;
         }
-        const userDetails = (req as any).user as IUser;
+        const userDetails = getUser(req);
         if (userDetails.userID !== device.owner) {
             res.sendStatus(401);
             return;
@@ -80,12 +81,20 @@ export const getUserRouter = (
     });
 
     router.post("/:id/devices", protect, async (req, res) => {
-        const userDetails = (req as any).user;
-        const devicePayload: IDevicePayload = req.body;
+        const userDetails = getUser(req);
+        const parsed = DevicePayloadSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid device payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const deviceData = parsed.data;
 
-        const token = nacl.sign.open(
-            XUtils.decodeHex(devicePayload.signed),
-            XUtils.decodeHex(devicePayload.signKey),
+        const token = xSignOpen(
+            XUtils.decodeHex(deviceData.signed),
+            XUtils.decodeHex(deviceData.signKey),
         );
 
         if (!token) {
@@ -98,11 +107,11 @@ export const getUserRouter = (
             try {
                 const device = await db.createDevice(
                     userDetails.userID,
-                    devicePayload,
+                    deviceData,
                 );
                 res.send(msgpack.encode(device));
-            } catch (err) {
-                console.warn(err);
+            } catch (err: unknown) {
+                log.warn(String(err));
                 // failed registration due to signkey being taken
                 res.sendStatus(470);
                 return;

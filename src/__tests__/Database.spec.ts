@@ -1,31 +1,29 @@
-// tslint:disable: no-string-literal
+import type { SpireOptions } from "../Spire.ts";
+import type { PreKeysWS } from "@vex-chat/types";
 
-import { vi, describe, it, expect } from "vitest";
 import { XUtils } from "@vex-chat/crypto";
-import type { IPreKeysSQL, IPreKeysWS } from "@vex-chat/types";
+
 import * as uuid from "uuid";
+import { describe, expect, it, vi } from "vitest";
 import winston from "winston";
 
 import { Database } from "../Database.ts";
-import type { ISpireOptions } from "../Spire.ts";
 
 // vi.mock is hoisted above all imports automatically.
 // Minimal stubs for uuid functions used by spire src: v4, parse, stringify.
 vi.mock("uuid", () => ({
-    v4: vi.fn(() => "93ce482b-a0f2-4f6e-b1df-3aed61073552"),
-    parse: (s: string) =>
-        Uint8Array.from(
-            s
-                .replace(/-/g, "")
-                .match(/.{2}/g)!
-                .map((b) => parseInt(b, 16)),
-        ),
+    parse: (s: string) => {
+        const matches = s.replace(/-/g, "").match(/.{2}/g);
+        if (!matches) throw new Error("Invalid UUID");
+        return Uint8Array.from(matches.map((b) => parseInt(b, 16)));
+    },
     stringify: (b: Uint8Array) => {
         const hex = Array.from(b)
             .map((x) => x.toString(16).padStart(2, "0"))
             .join("");
         return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
     },
+    v4: vi.fn(() => "93ce482b-a0f2-4f6e-b1df-3aed61073552"),
     validate: () => true,
 }));
 
@@ -33,12 +31,12 @@ vi.mock("uuid", () => ({
 function silentLogger(): winston.Logger {
     const noop = vi.fn();
     return {
-        log: noop,
-        info: noop,
-        warn: noop,
-        error: noop,
         debug: noop,
+        error: noop,
+        info: noop,
+        log: noop,
         verbose: noop,
+        warn: noop,
     } as unknown as winston.Logger;
 }
 
@@ -55,25 +53,25 @@ describe("Database", () => {
         "dd0665079426c3efcf4dce9b1487e4aca132f8147581b3294c3f23ddd2b4ba8240a10082bd06805d7eb320d91af971da3306e11b60073ccc3d829710f5036004000030c2d0294c1cfdbb73c6b3bbe6010088c2dba8384b04ff2e2b92172431d66b5e",
     );
 
-    const testSQLPreKey: IPreKeysSQL = {
-        userID,
-        keyID,
+    const testSQLPreKey = {
         deviceID,
+        index: 1,
+        keyID,
         publicKey:
             "30c2d0294c1cfdbb73c6b3bbe6010088c2dba8384b04ff2e2b92172431d66b5e",
         signature:
             "dd0665079426c3efcf4dce9b1487e4aca132f8147581b3294c3f23ddd2b4ba8240a10082bd06805d7eb320d91af971da3306e11b60073ccc3d829710f5036004000030c2d0294c1cfdbb73c6b3bbe6010088c2dba8384b04ff2e2b92172431d66b5e",
-        index: 1,
+        userID,
     };
 
-    const testWSPreKey: IPreKeysWS = {
-        publicKey,
-        signature,
+    const testWSPreKey: PreKeysWS = {
         deviceID,
         index: 1,
+        publicKey,
+        signature,
     };
 
-    const options: ISpireOptions = {
+    const options: SpireOptions = {
         dbType: "sqlite3mem",
     };
 
@@ -96,10 +94,10 @@ describe("Database", () => {
                                 testSQLPreKey.deviceID,
                                 [
                                     {
+                                        deviceID,
+                                        index: 1,
                                         publicKey,
                                         signature,
-                                        index: 1,
-                                        deviceID,
                                     },
                                 ],
                             );
@@ -107,8 +105,10 @@ describe("Database", () => {
                             expect(oneTimeKey).toEqual(testWSPreKey);
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });
@@ -133,8 +133,10 @@ describe("Database", () => {
                             expect(result).toEqual(testWSPreKey);
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });
@@ -152,8 +154,10 @@ describe("Database", () => {
                             expect(result).toBeNull();
                             await provider.close();
                             resolve();
-                        } catch (e) {
-                            reject(e);
+                        } catch (e: unknown) {
+                            reject(
+                                e instanceof Error ? e : new Error(String(e)),
+                            );
                         }
                     })();
                 });

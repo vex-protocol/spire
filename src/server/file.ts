@@ -1,23 +1,38 @@
+import type { Database } from "../Database.ts";
+import type { FileSQL } from "@vex-chat/types";
+import type winston from "winston";
+
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 
-import { XUtils } from "@vex-chat/crypto";
-import type { IDevice, IFilePayload, IFileSQL } from "@vex-chat/types";
 import express from "express";
+
+import { XUtils } from "@vex-chat/crypto";
+import { FilePayloadSchema } from "@vex-chat/types";
+
 import multer from "multer";
-import { v4 } from "uuid";
-import winston from "winston";
+import { z } from "zod/v4";
 
 import { msgpack } from "../utils/msgpack.ts";
+
+import { uploadLimiter } from "./rateLimit.ts";
+import { getParam } from "./utils.ts";
+
 import { protect } from "./index.ts";
-import { Database } from "../Database.ts";
+
+const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
 
 export const getFileRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();
 
     router.get("/:id", protect, async (req, res) => {
-        const entry = await db.retrieveFile(req.params.id);
+        const safeId = safePathParam.safeParse(getParam(req, "id"));
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const entry = await db.retrieveFile(safeId.data);
         if (!entry) {
             res.sendStatus(404);
         } else {
@@ -31,7 +46,12 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.get("/:id/details", protect, async (req, res) => {
-        const entry = await db.retrieveFile(req.params.id);
+        const safeId = safePathParam.safeParse(getParam(req, "id"));
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const entry = await db.retrieveFile(safeId.data);
         if (!entry) {
             res.sendStatus(404);
         } else {
@@ -44,8 +64,8 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
                 res.send(
                     msgpack.encode({
                         ...entry,
-                        size: stat.size,
                         birthtime: stat.birthtime,
+                        size: stat.size,
                     }),
                 );
             });
@@ -53,13 +73,22 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.post("/json", protect, async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any).device;
-        const payload: IFilePayload = req.body;
+        const deviceDetails = req.device;
 
         if (!deviceDetails) {
             res.sendStatus(401);
             return;
         }
+
+        const parsed = FilePayloadSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid file payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const payload = parsed.data;
 
         if (payload.nonce === "") {
             res.sendStatus(400);
@@ -73,10 +102,10 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
 
         const buf = Buffer.from(XUtils.decodeBase64(payload.file));
 
-        const newFile: IFileSQL = {
-            fileID: v4(),
-            owner: payload.owner,
+        const newFile: FileSQL = {
+            fileID: crypto.randomUUID(),
             nonce: payload.nonce,
+            owner: payload.owner,
         };
 
         await fsp.writeFile("files/" + newFile.fileID, buf);
@@ -86,37 +115,58 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
         res.send(msgpack.encode(newFile));
     });
 
-    router.post("/", protect, multer().single("file"), async (req, res) => {
-        const deviceDetails: IDevice | undefined = (req as any).device;
-        const payload: IFilePayload = req.body;
-
-        if (!deviceDetails) {
-            res.sendStatus(400);
-            return;
-        }
-
-        if (req.file === undefined) {
-            res.sendStatus(400);
-            return;
-        }
-
-        if (payload.nonce === "") {
-            res.sendStatus(400);
-            return;
-        }
-
-        const newFile: IFileSQL = {
-            fileID: v4(),
-            owner: payload.owner,
-            nonce: payload.nonce,
-        };
-
-        await fsp.writeFile("files/" + newFile.fileID, req.file.buffer);
-        log.info("Wrote new file " + newFile.fileID);
-
-        await db.createFile(newFile);
-        res.send(msgpack.encode(newFile));
+    // Multipart file upload — form fields are strings from multer, not full FilePayload
+    const multipartFields = z.object({
+        nonce: z.string().min(1),
+        owner: z.string().min(1),
     });
+
+    router.post(
+        "/",
+        uploadLimiter,
+        protect,
+        multer().single("file"),
+        async (req, res) => {
+            const deviceDetails = req.device;
+
+            if (!deviceDetails) {
+                res.sendStatus(400);
+                return;
+            }
+
+            const parsed = multipartFields.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid file payload",
+                    issues: parsed.error.issues,
+                });
+                return;
+            }
+            const payload = parsed.data;
+
+            if (req.file === undefined) {
+                res.sendStatus(400);
+                return;
+            }
+
+            if (payload.nonce === "") {
+                res.sendStatus(400);
+                return;
+            }
+
+            const newFile: FileSQL = {
+                fileID: crypto.randomUUID(),
+                nonce: payload.nonce,
+                owner: payload.owner,
+            };
+
+            await fsp.writeFile("files/" + newFile.fileID, req.file.buffer);
+            log.info("Wrote new file " + newFile.fileID);
+
+            await db.createFile(newFile);
+            res.send(msgpack.encode(newFile));
+        },
+    );
 
     return router;
 };

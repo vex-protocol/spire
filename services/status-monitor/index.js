@@ -460,7 +460,10 @@ function sendJson(res, statusCode, payload) {
     res.statusCode = statusCode;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization",
+    );
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.end(JSON.stringify(payload));
 }

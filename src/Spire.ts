@@ -1,36 +1,42 @@
-import * as fs from "node:fs";
+import type { ActionToken, BaseMsg, NotifyMsg, User } from "@vex-chat/types";
+import type { Server } from "http";
+import type winston from "winston";
+
+import { EventEmitter } from "events";
 import { execSync } from "node:child_process";
-import { Server } from "http";
+import * as fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { XUtils } from "@vex-chat/crypto";
-import type {
-    IActionToken,
-    IBaseMsg,
-    IDevice,
-    IMailWS,
-    INotifyMsg,
-    IRegistrationPayload,
-    IUser,
-} from "@vex-chat/types";
-import { TokenScopes } from "@vex-chat/types";
-import { EventEmitter } from "events";
 import express from "express";
 
-import nacl from "tweetnacl";
-import * as uuid from "uuid";
-import winston from "winston";
-import { WebSocketServer } from "ws";
+import { XUtils } from "@vex-chat/crypto";
+import {
+    type KeyPair,
+    xRandomBytes,
+    xSignKeyPairFromSecret,
+    xSignOpen,
+} from "@vex-chat/crypto";
+import {
+    MailWSSchema,
+    RegistrationPayloadSchema,
+    TokenScopes,
+    UserSchema,
+} from "@vex-chat/types";
 
 import jwt from "jsonwebtoken";
-import { msgpack } from "./utils/msgpack.ts";
+import { stringify as uuidStringify } from "uuid";
+import { WebSocketServer } from "ws";
+import { z } from "zod/v4";
+
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
-import { censorUser } from "./server/utils.ts";
+import { authLimiter } from "./server/rateLimit.ts";
+import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { createLogger } from "./utils/createLogger.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
+import { msgpack } from "./utils/msgpack.ts";
 
 // expiry of regkeys = 24hr
 export const TOKEN_EXPIRY = 1000 * 60 * 10;
@@ -41,6 +47,38 @@ const STATUS_LATENCY_BUDGET_MS = 250;
 
 // 3-19 chars long
 const usernameRegex = /^(\w{3,19})$/;
+
+// ── Zod schemas for trust-boundary validation ──────────────────────────
+const wsAuthMsg = z.object({
+    token: z.string().min(1),
+    type: z.literal("auth"),
+});
+
+const jwtPayload = z.object({
+    bearerToken: z.string().optional(),
+    exp: z.number().optional(),
+    user: UserSchema,
+});
+
+const authPayload = z.object({
+    password: z.string().min(1),
+    username: z.string().min(1),
+});
+
+const deviceAuthPayload = z.object({
+    deviceID: z.string().min(1),
+    signKey: z.string().min(1),
+});
+
+const deviceVerifyPayload = z.object({
+    challengeID: z.string().min(1),
+    signed: z.string().min(1),
+});
+
+const mailPostPayload = z.object({
+    header: z.custom<Uint8Array>((val) => val instanceof Uint8Array),
+    mail: MailWSSchema,
+});
 
 const directories = ["files", "avatars", "emoji"];
 for (const dir of directories) {
@@ -57,8 +95,16 @@ const getAppVersion = (): string => {
                 encoding: "utf8",
             },
         );
-        const pkg = JSON.parse(raw) as { version?: string };
-        return pkg.version || "unknown";
+        const pkg: unknown = JSON.parse(raw);
+        if (
+            typeof pkg === "object" &&
+            pkg !== null &&
+            "version" in pkg &&
+            typeof pkg.version === "string"
+        ) {
+            return pkg.version;
+        }
+        return "unknown";
     } catch {
         return "unknown";
     }
@@ -71,8 +117,8 @@ const getCommitSha = (): string => {
     try {
         const sha = execSync("git rev-parse --verify --short=12 HEAD", {
             cwd: repoRoot,
-            stdio: ["ignore", "pipe", "ignore"],
             encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
             timeout: 1500,
         }).trim();
         return sha || "unknown";
@@ -81,55 +127,62 @@ const getCommitSha = (): string => {
     }
 };
 
-export interface ISpireOptions {
-    logLevel?:
-        | "error"
-        | "warn"
-        | "info"
-        | "http"
-        | "verbose"
-        | "debug"
-        | "silly";
+export interface SpireOptions {
     apiPort?: number;
-    dbType?: "sqlite3" | "sqlite" | "mysql" | "sqlite3mem";
+    dbType?: "mysql" | "sqlite3" | "sqlite3mem" | "sqlite";
+    logLevel?:
+        | "debug"
+        | "error"
+        | "http"
+        | "info"
+        | "silly"
+        | "verbose"
+        | "warn";
 }
 
 export class Spire extends EventEmitter {
-    private db: Database;
-    private clients: ClientManager[] = [];
-    private readonly startedAt = new Date();
-    private readonly version = getAppVersion();
-    private readonly commitSha = getCommitSha();
-    private requestsTotal = 0;
-    private requestsTotalLoaded = false;
-    private queuedRequestIncrements = 0;
-    private dbReady = false;
-
+    private actionTokens: ActionToken[] = [];
     private api = express();
-    private wss: WebSocketServer = new WebSocketServer({ noServer: true });
-
-    private signKeys: nacl.SignKeyPair;
-
-    private actionTokens: IActionToken[] = [];
+    private clients: ClientManager[] = [];
+    private readonly commitSha = getCommitSha();
+    private db: Database;
+    private dbReady = false;
     private deviceChallenges = new Map<
         string,
         { deviceID: string; nonce: string; time: number }
     >();
-
     private log: winston.Logger;
-    private server: Server | null = null;
-    private options: ISpireOptions | undefined;
+    private options: SpireOptions | undefined;
 
-    constructor(SK: string, options?: ISpireOptions) {
+    private queuedRequestIncrements = 0;
+    private requestsTotal = 0;
+
+    private requestsTotalLoaded = false;
+
+    private server: null | Server = null;
+    private signKeys: KeyPair;
+
+    private readonly startedAt = new Date();
+    private readonly version = getAppVersion();
+    private wss: WebSocketServer = new WebSocketServer({ noServer: true });
+
+    constructor(SK: string, options?: SpireOptions) {
         super();
-        this.signKeys = nacl.sign.keyPair.fromSecretKey(XUtils.decodeHex(SK));
+        this.signKeys = xSignKeyPairFromSecret(XUtils.decodeHex(SK));
+
+        // Trust a single proxy hop (nginx / cloudflare / load balancer).
+        // Required so `req.ip` and `express-rate-limit`'s keyGenerator see
+        // the real client address via X-Forwarded-For. Never use `true` —
+        // that lets attackers spoof the header and bypass rate limiting.
+        // If spire is deployed without a proxy, set this to 0 instead.
+        this.api.set("trust proxy", 1);
 
         this.db = new Database(options);
         this.db.on("ready", () => {
             this.dbReady = true;
-            this.bootstrapRequestCounter().catch((err) => {
+            this.bootstrapRequestCounter().catch((err: unknown) => {
                 this.log.error(
-                    "Failed to load persisted request counter: " + err,
+                    "Failed to load persisted request counter: " + String(err),
                 );
             });
         });
@@ -159,76 +212,31 @@ export class Spire extends EventEmitter {
         return;
     }
 
-    private notify(
-        userID: string,
-        event: string,
-        transmissionID: string,
-        data?: any,
-        deviceID?: string,
-    ): void {
-        for (const client of this.clients) {
-            if (deviceID) {
-                if (client.getDevice().deviceID === deviceID) {
-                    const msg: INotifyMsg = {
-                        transmissionID,
-                        type: "notify",
-                        event,
-                        data,
-                    };
-                    client.send(msg);
-                }
-            } else {
-                if (client.getUser().userID === userID) {
-                    const msg: INotifyMsg = {
-                        transmissionID,
-                        type: "notify",
-                        event,
-                        data,
-                    };
-                    client.send(msg);
-                }
-            }
+    private async bootstrapRequestCounter(): Promise<void> {
+        const persistedTotal = await this.db.getRequestsTotal();
+        const startupIncrements = this.queuedRequestIncrements;
+        this.queuedRequestIncrements = 0;
+        this.requestsTotal = persistedTotal + startupIncrements;
+        if (startupIncrements > 0) {
+            await this.db.incrementRequestsTotal(startupIncrements);
         }
+        this.requestsTotalLoaded = true;
     }
 
-    private createActionToken(scope: TokenScopes): IActionToken {
-        const token: IActionToken = {
-            key: uuid.v4(),
-            time: new Date(Date.now()),
+    private createActionToken(scope: TokenScopes): ActionToken {
+        const token: ActionToken = {
+            key: crypto.randomUUID(),
             scope,
+            time: new Date().toISOString(),
         };
         this.actionTokens.push(token);
         return token;
     }
 
-    private deleteActionToken(key: IActionToken) {
+    private deleteActionToken(key: ActionToken) {
         if (this.actionTokens.includes(key)) {
             this.actionTokens.splice(this.actionTokens.indexOf(key), 1);
         }
-    }
-
-    private validateToken(key: string, scope: TokenScopes): boolean {
-        this.log.info("Validating token: " + key);
-        for (const rKey of this.actionTokens) {
-            if (rKey.key === key) {
-                if (rKey.scope !== scope) {
-                    continue;
-                }
-
-                const age =
-                    new Date(Date.now()).getTime() - rKey.time.getTime();
-                this.log.info("Token found, " + age + " ms old.");
-                if (age < TOKEN_EXPIRY) {
-                    this.log.info("Token is valid.");
-                    this.deleteActionToken(rKey);
-                    return true;
-                } else {
-                    this.log.info("Token is expired.");
-                }
-            }
-        }
-        this.log.info("Token not found.");
-        return false;
     }
 
     private init(apiPort: number): void {
@@ -238,9 +246,10 @@ export class Spire extends EventEmitter {
             if (!this.requestsTotalLoaded) {
                 this.queuedRequestIncrements += 1;
             } else {
-                this.db.incrementRequestsTotal(1).catch((err) => {
+                this.db.incrementRequestsTotal(1).catch((err: unknown) => {
                     this.log.warn(
-                        "Failed to persist request counter increment: " + err,
+                        "Failed to persist request counter increment: " +
+                            String(err),
                     );
                 });
             }
@@ -268,23 +277,36 @@ export class Spire extends EventEmitter {
                 ws.close();
             }, AUTH_TIMEOUT);
 
-            const onFirstMessage = (data: Buffer | ArrayBuffer | Buffer[]) => {
+            const onFirstMessage = (data: ArrayBuffer | Buffer | Buffer[]) => {
                 const str = Buffer.isBuffer(data)
                     ? data.toString()
-                    : Buffer.from(data as ArrayBuffer).toString();
+                    : data instanceof ArrayBuffer
+                      ? Buffer.from(data).toString()
+                      : Buffer.concat(data).toString();
                 clearTimeout(timer);
                 ws.off("message", onFirstMessage);
 
                 try {
-                    const parsed = JSON.parse(str);
-                    if (parsed.type !== "auth" || !parsed.token) {
+                    const rawParsed: unknown = JSON.parse(str);
+                    const authResult = wsAuthMsg.safeParse(rawParsed);
+                    if (!authResult.success) {
                         throw new Error(
-                            "Expected { type: 'auth', token }, got type=" +
-                                parsed.type,
+                            "Expected { type: 'auth', token }, got: " +
+                                JSON.stringify(authResult.error.issues),
                         );
                     }
-                    const result = jwt.verify(parsed.token, getJwtSecret());
-                    const userDetails: IUser = (result as any).user;
+                    const result = jwt.verify(
+                        authResult.data.token,
+                        getJwtSecret(),
+                    );
+                    const jwtResult = jwtPayload.safeParse(result);
+                    if (!jwtResult.success) {
+                        throw new Error(
+                            "Invalid JWT payload: " +
+                                JSON.stringify(jwtResult.error.issues),
+                        );
+                    }
+                    const userDetails: User = jwtResult.data.user;
 
                     this.log.info(
                         "WS auth succeeded for " + userDetails.username,
@@ -311,7 +333,7 @@ export class Spire extends EventEmitter {
                         }
                         this.log.info(
                             "Current authorized clients: " +
-                                this.clients.length,
+                                String(this.clients.length),
                         );
                     });
 
@@ -322,14 +344,14 @@ export class Spire extends EventEmitter {
                         this.clients.push(client);
                         this.log.info(
                             "Current authorized clients: " +
-                                this.clients.length,
+                                String(this.clients.length),
                         );
                     });
-                } catch (err) {
-                    this.log.warn("WS auth failed: " + err);
-                    const errMsg: IBaseMsg = {
+                } catch (err: unknown) {
+                    this.log.warn("WS auth failed: " + String(err));
+                    const errMsg: BaseMsg = {
+                        transmissionID: crypto.randomUUID(),
                         type: "unauthorized",
-                        transmissionID: uuid.v4(),
                     };
                     ws.send(XUtils.packMessage(errMsg));
                     ws.close();
@@ -337,19 +359,21 @@ export class Spire extends EventEmitter {
             };
 
             ws.on("message", onFirstMessage);
-            ws.on("close", () => clearTimeout(timer));
+            ws.on("close", () => {
+                clearTimeout(timer);
+            });
         });
 
         this.api.get(
             "/token/:tokenType",
             (req, res, next) => {
-                if (req.params.tokenType !== "register") {
+                if (getParam(req, "tokenType") !== "register") {
                     protect(req, res, next);
                 } else {
                     next();
                 }
             },
-            async (req, res) => {
+            (req, res) => {
                 const allowedTokens = [
                     "file",
                     "register",
@@ -360,7 +384,7 @@ export class Spire extends EventEmitter {
                     "connect",
                 ];
 
-                const { tokenType } = req.params;
+                const tokenType = getParam(req, "tokenType");
 
                 if (!allowedTokens.includes(tokenType)) {
                     res.sendStatus(400);
@@ -370,26 +394,26 @@ export class Spire extends EventEmitter {
                 let scope;
 
                 switch (tokenType) {
-                    case "file":
-                        scope = TokenScopes.File;
-                        break;
-                    case "register":
-                        scope = TokenScopes.Register;
-                        break;
                     case "avatar":
                         scope = TokenScopes.Avatar;
+                        break;
+                    case "connect":
+                        scope = TokenScopes.Connect;
                         break;
                     case "device":
                         scope = TokenScopes.Device;
                         break;
-                    case "invite":
-                        scope = TokenScopes.Invite;
-                        break;
                     case "emoji":
                         scope = TokenScopes.Emoji;
                         break;
-                    case "connect":
-                        scope = TokenScopes.Connect;
+                    case "file":
+                        scope = TokenScopes.File;
+                        break;
+                    case "invite":
+                        scope = TokenScopes.Invite;
+                        break;
+                    case "register":
+                        scope = TokenScopes.Register;
                         break;
                     default:
                         res.sendStatus(400);
@@ -417,34 +441,34 @@ export class Spire extends EventEmitter {
 
                     res.set("Content-Type", "application/msgpack");
                     return res.send(msgpack.encode(token));
-                } catch (err) {
-                    console.error(err.toString());
+                } catch (err: unknown) {
+                    this.log.error(String(err));
                     return res.sendStatus(500);
                 }
             },
         );
 
-        this.api.post("/whoami", async (req, res) => {
-            if (!(req as any).user) {
+        this.api.post("/whoami", (req, res) => {
+            if (!req.user) {
                 res.sendStatus(401);
                 return;
             }
 
             res.send(
                 msgpack.encode({
-                    user: (req as any).user,
-                    exp: (req as any).exp,
-                    token: (req as any).bearerToken,
+                    exp: req.exp,
+                    token: req.bearerToken,
+                    user: req.user,
                 }),
             );
         });
 
         this.api.get("/healthz", (_req, res) => {
             if (!this.dbReady) {
-                res.status(503).json({ ok: false, dbReady: false });
+                res.status(503).json({ dbReady: false, ok: false });
                 return;
             }
-            res.json({ ok: true, dbReady: true });
+            res.json({ dbReady: true, ok: true });
         });
 
         this.api.get("/status", async (_req, res) => {
@@ -454,46 +478,40 @@ export class Spire extends EventEmitter {
 
             const ok = dbHealthy;
             res.json({
-                ok,
-                uptimeSeconds: Math.floor(process.uptime()),
-                startedAt: this.startedAt.toISOString(),
-                now: new Date().toISOString(),
-                version: this.version,
-                commitSha: this.commitSha,
                 checkDurationMs,
+                commitSha: this.commitSha,
+                dbHealthy,
+                dbReady: this.dbReady,
                 latencyBudgetMs: STATUS_LATENCY_BUDGET_MS,
-                withinLatencyBudget:
-                    checkDurationMs <= STATUS_LATENCY_BUDGET_MS,
                 metrics: {
                     requestsTotal: this.requestsTotal,
                 },
-                dbReady: this.dbReady,
-                dbHealthy,
+                now: new Date(),
+                ok,
+                startedAt: this.startedAt.toISOString(),
+                uptimeSeconds: Math.floor(process.uptime()),
+                version: this.version,
+                withinLatencyBudget:
+                    checkDurationMs <= STATUS_LATENCY_BUDGET_MS,
             });
         });
 
-        this.api.post("/goodbye", protect, async (req, res) => {
-            const token = jwt.sign(
-                { user: censorUser((req as any).user) },
-                getJwtSecret(),
-                { expiresIn: -1 },
-            );
+        this.api.post("/goodbye", protect, (req, res) => {
+            jwt.sign({ user: req.user }, getJwtSecret(), { expiresIn: -1 });
             res.sendStatus(200);
         });
 
         // ── Device-key auth ──────────────────────────────────────────
 
-        this.api.post("/auth/device", async (req, res) => {
+        this.api.post("/auth/device", authLimiter, async (req, res) => {
             try {
-                const { deviceID, signKey } = req.body as {
-                    deviceID: string;
-                    signKey: string;
-                };
-                if (!deviceID || !signKey) {
+                const parsed = deviceAuthPayload.safeParse(req.body);
+                if (!parsed.success) {
                     return res
                         .status(400)
                         .send({ error: "deviceID and signKey required." });
                 }
+                const { deviceID, signKey } = parsed.data;
 
                 const device = await this.db.retrieveDevice(deviceID);
                 if (!device || device.signKey !== signKey) {
@@ -501,8 +519,8 @@ export class Spire extends EventEmitter {
                 }
 
                 // Generate challenge nonce (32 bytes)
-                const nonce = XUtils.encodeHex(nacl.randomBytes(32));
-                const challengeID = uuid.v4();
+                const nonce = XUtils.encodeHex(xRandomBytes(32));
+                const challengeID = crypto.randomUUID();
                 this.deviceChallenges.set(challengeID, {
                     deviceID,
                     nonce,
@@ -516,25 +534,23 @@ export class Spire extends EventEmitter {
 
                 this.log.info("Device challenge issued for " + deviceID);
                 return res.send(
-                    msgpack.encode({ challengeID, challenge: nonce }),
+                    msgpack.encode({ challenge: nonce, challengeID }),
                 );
-            } catch (err) {
-                this.log.error("Device challenge error: " + err);
+            } catch (err: unknown) {
+                this.log.error("Device challenge error: " + String(err));
                 return res.sendStatus(500);
             }
         });
 
-        this.api.post("/auth/device/verify", async (req, res) => {
+        this.api.post("/auth/device/verify", authLimiter, async (req, res) => {
             try {
-                const { challengeID, signed } = req.body as {
-                    challengeID: string;
-                    signed: string;
-                };
-                if (!challengeID || !signed) {
+                const parsed = deviceVerifyPayload.safeParse(req.body);
+                if (!parsed.success) {
                     return res.status(400).send({
                         error: "challengeID and signed required.",
                     });
                 }
+                const { challengeID, signed } = parsed.data;
 
                 const challenge = this.deviceChallenges.get(challengeID);
                 if (!challenge) {
@@ -560,7 +576,7 @@ export class Spire extends EventEmitter {
                 }
 
                 // Verify the Ed25519 signature
-                const opened = nacl.sign.open(
+                const opened = xSignOpen(
                     XUtils.decodeHex(signed),
                     XUtils.decodeHex(device.signKey),
                 );
@@ -600,79 +616,70 @@ export class Spire extends EventEmitter {
                         ")",
                 );
                 return res.send(
-                    msgpack.encode({ user: censorUser(user), token }),
+                    msgpack.encode({ token, user: censorUser(user) }),
                 );
-            } catch (err) {
-                this.log.error("Device verify error: " + err);
+            } catch (err: unknown) {
+                this.log.error("Device verify error: " + String(err));
                 return res.sendStatus(500);
             }
         });
 
         this.api.post("/mail", protect, async (req, res) => {
-            const senderDeviceDetails: IDevice | undefined = (req as any)
-                .device;
+            const senderDeviceDetails = req.device;
             if (!senderDeviceDetails) {
                 res.sendStatus(401);
                 return;
             }
-            const authorUserDetails: IUser = (req as any).user;
+            const authorUserDetails = getUser(req);
 
-            const { header, mail }: { header: Uint8Array; mail: IMailWS } =
-                req.body;
-
-            try {
-                await this.db.saveMail(
-                    mail,
-                    header,
-                    senderDeviceDetails.deviceID,
-                    authorUserDetails.userID,
-                );
-                this.log.info("Received mail for " + mail.recipient);
-
-                const recipientDeviceDetails = await this.db.retrieveDevice(
-                    mail.recipient,
-                );
-                if (!recipientDeviceDetails) {
-                    res.sendStatus(400);
-                    return;
-                }
-
-                res.sendStatus(200);
-                this.notify(
-                    recipientDeviceDetails.owner,
-                    "mail",
-                    uuid.v4(),
-                    null,
-                    mail.recipient,
-                );
-            } catch (err) {
-                this.log.error(err);
-                res.status(500).send(err.toString());
+            const parsed = mailPostPayload.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid mail payload",
+                    issues: parsed.error.issues,
+                });
+                return;
             }
+            const { header, mail } = parsed.data;
+
+            await this.db.saveMail(
+                mail,
+                header,
+                senderDeviceDetails.deviceID,
+                authorUserDetails.userID,
+            );
+            this.log.info("Received mail for " + mail.recipient);
+
+            const recipientDeviceDetails = await this.db.retrieveDevice(
+                mail.recipient,
+            );
+            if (!recipientDeviceDetails) {
+                res.sendStatus(400);
+                return;
+            }
+
+            res.sendStatus(200);
+            this.notify(
+                recipientDeviceDetails.owner,
+                "mail",
+                crypto.randomUUID(),
+                null,
+                mail.recipient,
+            );
         });
 
-        this.api.post("/auth", async (req, res) => {
-            const credentials: { username: string; password: string } =
-                req.body;
-
-            if (typeof credentials.password !== "string") {
-                res.status(400).send(
-                    "Password is required and must be a string.",
-                );
+        this.api.post("/auth", authLimiter, async (req, res) => {
+            const parsed = authPayload.safeParse(req.body);
+            if (!parsed.success) {
+                res.status(400).json({
+                    error: "Invalid credentials format",
+                });
                 return;
             }
-
-            if (typeof credentials.username !== "string") {
-                res.status(400).send(
-                    "Username is required and must be a string.",
-                );
-                return;
-            }
+            const { password, username } = parsed.data;
 
             try {
-                const userEntry = await this.db.retrieveUser(
-                    credentials.username,
-                );
+                const userEntry = await this.db.retrieveUser(username);
                 if (!userEntry) {
                     res.sendStatus(404);
                     this.log.warn("User does not exist.");
@@ -681,7 +688,7 @@ export class Spire extends EventEmitter {
 
                 const salt = XUtils.decodeHex(userEntry.passwordSalt);
                 const payloadHash = XUtils.encodeHex(
-                    hashPassword(credentials.password, salt),
+                    hashPassword(password, salt),
                 );
 
                 if (payloadHash !== userEntry.passwordHash) {
@@ -699,17 +706,25 @@ export class Spire extends EventEmitter {
                 jwt.verify(token, getJwtSecret());
 
                 res.send(
-                    msgpack.encode({ user: censorUser(userEntry), token }),
+                    msgpack.encode({ token, user: censorUser(userEntry) }),
                 );
-            } catch (err) {
-                this.log.error(err.toString());
+            } catch (err: unknown) {
+                this.log.error(String(err));
                 res.sendStatus(500);
             }
         });
 
-        this.api.post("/register", async (req, res) => {
+        this.api.post("/register", authLimiter, async (req, res) => {
             try {
-                const regPayload: IRegistrationPayload = req.body;
+                const regParsed = RegistrationPayloadSchema.safeParse(req.body);
+                if (!regParsed.success) {
+                    res.status(400).json({
+                        error: "Invalid registration payload",
+                        issues: regParsed.error.issues,
+                    });
+                    return;
+                }
+                const regPayload = regParsed.data;
                 if (!usernameRegex.test(regPayload.username)) {
                     res.status(400).send({
                         error: "Username must be between three and nineteen letters, digits, or underscores.",
@@ -717,7 +732,7 @@ export class Spire extends EventEmitter {
                     return;
                 }
 
-                const regKey = nacl.sign.open(
+                const regKey = xSignOpen(
                     XUtils.decodeHex(regPayload.signed),
                     XUtils.decodeHex(regPayload.signKey),
                 );
@@ -725,7 +740,7 @@ export class Spire extends EventEmitter {
                 if (
                     regKey &&
                     this.validateToken(
-                        uuid.stringify(regKey),
+                        uuidStringify(regKey),
                         TokenScopes.Register,
                     )
                 ) {
@@ -734,14 +749,18 @@ export class Spire extends EventEmitter {
                         regPayload,
                     );
                     if (err !== null) {
-                        switch ((err as any).code) {
+                        const errCode =
+                            "code" in err && typeof err.code === "string"
+                                ? err.code
+                                : undefined;
+                        switch (errCode) {
                             case "ER_DUP_ENTRY":
-                                const usernameConflict = err
-                                    .toString()
-                                    .includes("users_username_unique");
-                                const signKeyConflict = err
-                                    .toString()
-                                    .includes("users_signkey_unique");
+                                const usernameConflict = String(err).includes(
+                                    "users_username_unique",
+                                );
+                                const signKeyConflict = String(err).includes(
+                                    "users_signkey_unique",
+                                );
 
                                 this.log.warn(
                                     "User attempted to register duplicate account.",
@@ -765,29 +784,33 @@ export class Spire extends EventEmitter {
                             default:
                                 this.log.info(
                                     "Unsupported sql error type: " +
-                                        (err as any).code,
+                                        String(errCode),
                                 );
-                                this.log.error(err);
+                                this.log.error(String(err));
                                 res.sendStatus(500);
                                 break;
                         }
                     } else {
                         this.log.info("Registration success.");
-                        res.send(msgpack.encode(censorUser(user!)));
+                        if (!user) {
+                            res.sendStatus(500);
+                            return;
+                        }
+                        res.send(msgpack.encode(censorUser(user)));
                     }
                 } else {
                     res.status(400).send({
                         error: "Invalid or no token supplied.",
                     });
                 }
-            } catch (err) {
-                this.log.error("error registering user: " + err.toString());
+            } catch (err: unknown) {
+                this.log.error("error registering user: " + String(err));
                 res.sendStatus(500);
             }
         });
 
         this.server = this.api.listen(apiPort, () => {
-            this.log.info("API started on port " + apiPort.toString());
+            this.log.info("API started on port " + String(apiPort));
         });
 
         // Accept all WS upgrades — auth happens post-connection.
@@ -798,14 +821,58 @@ export class Spire extends EventEmitter {
         });
     }
 
-    private async bootstrapRequestCounter(): Promise<void> {
-        const persistedTotal = await this.db.getRequestsTotal();
-        const startupIncrements = this.queuedRequestIncrements;
-        this.queuedRequestIncrements = 0;
-        this.requestsTotal = persistedTotal + startupIncrements;
-        if (startupIncrements > 0) {
-            await this.db.incrementRequestsTotal(startupIncrements);
+    private notify(
+        userID: string,
+        event: string,
+        transmissionID: string,
+        data?: unknown,
+        deviceID?: string,
+    ): void {
+        for (const client of this.clients) {
+            if (deviceID) {
+                if (client.getDevice().deviceID === deviceID) {
+                    const msg: NotifyMsg = {
+                        data,
+                        event,
+                        transmissionID,
+                        type: "notify",
+                    };
+                    client.send(msg);
+                }
+            } else {
+                if (client.getUser().userID === userID) {
+                    const msg: NotifyMsg = {
+                        data,
+                        event,
+                        transmissionID,
+                        type: "notify",
+                    };
+                    client.send(msg);
+                }
+            }
         }
-        this.requestsTotalLoaded = true;
+    }
+
+    private validateToken(key: string, scope: TokenScopes): boolean {
+        this.log.info("Validating token: " + key);
+        for (const rKey of this.actionTokens) {
+            if (rKey.key === key) {
+                if (rKey.scope !== scope) {
+                    continue;
+                }
+
+                const age = Date.now() - new Date(rKey.time).getTime();
+                this.log.info("Token found, " + String(age) + " ms old.");
+                if (age < TOKEN_EXPIRY) {
+                    this.log.info("Token is valid.");
+                    this.deleteActionToken(rKey);
+                    return true;
+                } else {
+                    this.log.info("Token is expired.");
+                }
+            }
+        }
+        this.log.info("Token not found.");
+        return false;
     }
 }

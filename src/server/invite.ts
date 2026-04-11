@@ -1,13 +1,14 @@
-import { TokenScopes } from "@vex-chat/types";
+import type { Database } from "../Database.ts";
+import type { TokenScopes } from "@vex-chat/types";
+import type winston from "winston";
+
 import express from "express";
-import * as uuid from "uuid";
-import winston from "winston";
 
 import { msgpack } from "../utils/msgpack.ts";
-import { POWER_LEVELS } from "../ClientManager.ts";
-import { Database } from "../Database.ts";
+
+import { getParam, getUser } from "./utils.ts";
+
 import { protect } from "./index.ts";
-import type { IUser } from "@vex-chat/types";
 
 export const getInviteRouter = (
     db: Database,
@@ -17,15 +18,15 @@ export const getInviteRouter = (
         userID: string,
         event: string,
         transmissionID: string,
-        data?: any,
+        data?: unknown,
         deviceID?: string,
     ) => void,
 ) => {
     const router = express.Router();
     router.patch("/:inviteID", protect, async (req, res) => {
-        const userDetails: IUser = (req as any).user;
+        const userDetails = getUser(req);
 
-        const invite = await db.retrieveInvite(req.params.inviteID);
+        const invite = await db.retrieveInvite(getParam(req, "inviteID"));
         if (!invite) {
             res.sendStatus(404);
             return;
@@ -43,11 +44,16 @@ export const getInviteRouter = (
             0,
         );
         res.send(msgpack.encode(permission));
-        notify(userDetails.userID, "permission", uuid.v4(), permission);
+        notify(
+            userDetails.userID,
+            "permission",
+            crypto.randomUUID(),
+            permission,
+        );
     });
 
     router.get("/:inviteID", protect, async (req, res) => {
-        const invite = await db.retrieveInvite(req.params.inviteID);
+        const invite = await db.retrieveInvite(getParam(req, "inviteID"));
         if (!invite) {
             res.sendStatus(404);
             return;

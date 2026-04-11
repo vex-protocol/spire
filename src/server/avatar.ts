@@ -1,21 +1,35 @@
+import type { Database } from "../Database.ts";
+import type winston from "winston";
+
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
+
+import express from "express";
 
 import { XUtils } from "@vex-chat/crypto";
-import type { IDevice, IFilePayload } from "@vex-chat/types";
-import express from "express";
+import { FilePayloadSchema } from "@vex-chat/types";
+
 import { fileTypeFromBuffer, fileTypeFromFile } from "file-type";
 import multer from "multer";
-import winston from "winston";
+import { z } from "zod/v4";
+
+import { uploadLimiter } from "./rateLimit.ts";
+import { getParam, getUser } from "./utils.ts";
 
 import { ALLOWED_IMAGE_TYPES, protect } from "./index.ts";
-import { Database } from "../Database.ts";
-import type { IUser } from "@vex-chat/types";
+
+const safePathParam = z.string().regex(/^[a-zA-Z0-9._-]+$/);
 
 export const getAvatarRouter = (db: Database, log: winston.Logger) => {
     const router = express.Router();
 
     router.get("/:userID", async (req, res) => {
-        const filePath = "./avatars/" + req.params.userID;
+        const safeId = safePathParam.safeParse(getParam(req, "userID"));
+        if (!safeId.success) {
+            res.sendStatus(400);
+            return;
+        }
+        const filePath = "./avatars/" + safeId.data;
         const typeDetails = await fileTypeFromFile(filePath).catch(() => null);
         if (!typeDetails) {
             res.sendStatus(404);
@@ -33,9 +47,17 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
     });
 
     router.post("/:userID/json", protect, async (req, res) => {
-        const payload: IFilePayload = req.body;
-        const userDetails: IUser = (req as any).user;
-        const deviceDetails: IDevice | undefined = (req as any).device;
+        const parsed = FilePayloadSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({
+                error: "Invalid file payload",
+                issues: parsed.error.issues,
+            });
+            return;
+        }
+        const payload = parsed.data;
+        const userDetails = getUser(req);
+        const deviceDetails = req.device;
 
         if (!deviceDetails) {
             res.sendStatus(401);
@@ -43,7 +65,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
         }
 
         if (!payload.file) {
-            console.warn("MISSING FILE");
+            log.warn("MISSING FILE");
             res.sendStatus(400);
             return;
         }
@@ -54,30 +76,30 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
             res.status(400).send({
                 error:
                     "Unsupported file type. Expected jpeg, png, gif, apng, avif, or svg but received " +
-                    mimeType?.ext,
+                    String(mimeType?.ext),
             });
             return;
         }
 
         try {
             // write the file to disk
-            fs.writeFile("avatars/" + userDetails.userID, buf, () => {
-                log.info("Wrote new avatar " + userDetails.userID);
-            });
+            await fsp.writeFile("avatars/" + userDetails.userID, buf);
+            log.info("Wrote new avatar " + userDetails.userID);
             res.sendStatus(200);
-        } catch (err) {
-            log.warn(err);
+        } catch (err: unknown) {
+            log.warn(String(err));
             res.sendStatus(500);
         }
     });
 
     router.post(
         "/:userID",
+        uploadLimiter,
         protect,
         multer().single("avatar"),
         async (req, res) => {
-            const userDetails: IUser = (req as any).user;
-            const deviceDetails: IDevice | undefined = (req as any).device;
+            const userDetails = getUser(req);
+            const deviceDetails = req.device;
 
             if (!deviceDetails) {
                 res.sendStatus(401);
@@ -85,7 +107,7 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
             }
 
             if (!req.file) {
-                console.warn("MISSING FILE");
+                log.warn("MISSING FILE");
                 res.sendStatus(400);
                 return;
             }
@@ -95,23 +117,21 @@ export const getAvatarRouter = (db: Database, log: winston.Logger) => {
                 res.status(400).send({
                     error:
                         "Unsupported file type. Expected jpeg, png, gif, apng, avif, or svg but received " +
-                        mimeType?.ext,
+                        String(mimeType?.ext),
                 });
                 return;
             }
 
             try {
                 // write the file to disk
-                fs.writeFile(
+                await fsp.writeFile(
                     "avatars/" + userDetails.userID,
                     req.file.buffer,
-                    () => {
-                        log.info("Wrote new avatar " + userDetails.userID);
-                    },
                 );
+                log.info("Wrote new avatar " + userDetails.userID);
                 res.sendStatus(200);
-            } catch (err) {
-                log.warn(err);
+            } catch (err: unknown) {
+                log.warn(String(err));
                 res.sendStatus(500);
             }
         },
