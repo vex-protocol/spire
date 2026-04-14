@@ -156,8 +156,6 @@ export const msgpackParser: express.RequestHandler = (req, res, next) => {
     next();
 };
 
-const isProduction = process.env["NODE_ENV"] === "production";
-
 const directories = ["files", "avatars"];
 for (const dir of directories) {
     if (!fs.existsSync(dir)) {
@@ -197,9 +195,7 @@ export const initApp = (
             type: "application/msgpack",
         }),
     );
-    if (isProduction) {
-        api.use(helmet());
-    }
+    api.use(helmet());
     api.use(msgpackParser);
     api.use(checkAuth);
     api.use(checkDevice);
@@ -208,7 +204,13 @@ export const initApp = (
         api.use(morgan("dev", { stream: process.stdout }));
     }
 
-    api.use(cors({ credentials: true }));
+    const allowedOrigins = process.env["CORS_ORIGINS"]?.split(",") ?? [];
+    api.use(
+        cors({
+            credentials: true,
+            origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+        }),
+    );
 
     api.get("/server/:id", protect, async (req, res) => {
         const server = await db.retrieveServer(getParam(req, "id"));
@@ -703,10 +705,12 @@ export const initApp = (
         }
         if (!payload.name) {
             res.sendStatus(400);
+            return;
         }
         if (Buffer.byteLength(buf) > 256000) {
             log.warn("File too big.");
             res.sendStatus(413);
+            return;
         }
 
         const mimeType = await fileTypeFromBuffer(buf);
@@ -786,6 +790,7 @@ export const initApp = (
 
             if (!payload.name) {
                 res.sendStatus(400);
+                return;
             }
 
             if (!req.file) {
@@ -797,6 +802,7 @@ export const initApp = (
             if (Buffer.byteLength(req.file.buffer) > 256000) {
                 log.warn("File too big.");
                 res.sendStatus(413);
+                return;
             }
 
             const mimeType = await fileTypeFromBuffer(req.file.buffer);

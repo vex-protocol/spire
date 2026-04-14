@@ -173,12 +173,11 @@ export class ClientManager extends EventEmitter {
             this.fail();
         });
         this.conn.on("message", (message: Buffer) => {
-            const [header, msg] = unpackMessage(message);
             const size = Buffer.byteLength(message);
 
             if (size > MAX_MSG_SIZE) {
                 this.sendErr(
-                    msg.transmissionID,
+                    "00000000-0000-0000-0000-000000000000",
                     "Message is too big. Received size " +
                         String(size) +
                         " while max size is " +
@@ -186,6 +185,8 @@ export class ClientManager extends EventEmitter {
                 );
                 return;
             }
+
+            const [header, msg] = unpackMessage(message);
 
             this.log.info(
                 pc.bold("⟵   ") +

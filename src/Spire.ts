@@ -4,6 +4,7 @@ import type winston from "winston";
 
 import { EventEmitter } from "events";
 import { execSync } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,7 +165,10 @@ export class Spire extends EventEmitter {
 
     private readonly startedAt = new Date();
     private readonly version = getAppVersion();
-    private wss: WebSocketServer = new WebSocketServer({ noServer: true });
+    private wss: WebSocketServer = new WebSocketServer({
+        maxPayload: 4096,
+        noServer: true,
+    });
 
     constructor(SK: string, options?: SpireOptions) {
         super();
@@ -457,7 +461,6 @@ export class Spire extends EventEmitter {
             res.send(
                 msgpack.encode({
                     exp: req.exp,
-                    token: req.bearerToken,
                     user: req.user,
                 }),
             );
@@ -681,17 +684,18 @@ export class Spire extends EventEmitter {
             try {
                 const userEntry = await this.db.retrieveUser(username);
                 if (!userEntry) {
-                    res.sendStatus(404);
-                    this.log.warn("User does not exist.");
+                    res.sendStatus(401);
                     return;
                 }
 
                 const salt = XUtils.decodeHex(userEntry.passwordSalt);
-                const payloadHash = XUtils.encodeHex(
-                    hashPassword(password, salt),
-                );
+                const payloadHash = hashPassword(password, salt);
+                const storedHash = XUtils.decodeHex(userEntry.passwordHash);
 
-                if (payloadHash !== userEntry.passwordHash) {
+                if (
+                    payloadHash.length !== storedHash.length ||
+                    !timingSafeEqual(payloadHash, storedHash)
+                ) {
                     res.sendStatus(401);
                     return;
                 }

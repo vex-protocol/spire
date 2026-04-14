@@ -105,7 +105,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
         const newFile: FileSQL = {
             fileID: crypto.randomUUID(),
             nonce: payload.nonce,
-            owner: payload.owner,
+            owner: deviceDetails.deviceID,
         };
 
         await fsp.writeFile("files/" + newFile.fileID, buf);
@@ -157,7 +157,7 @@ export const getFileRouter = (db: Database, log: winston.Logger) => {
             const newFile: FileSQL = {
                 fileID: crypto.randomUUID(),
                 nonce: payload.nonce,
-                owner: payload.owner,
+                owner: deviceDetails.deviceID,
             };
 
             await fsp.writeFile("files/" + newFile.fileID, req.file.buffer);
