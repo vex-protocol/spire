@@ -4,24 +4,20 @@ FROM node:24-alpine AS build
 # argon2 compiles native C code via node-gyp
 RUN apk add --no-cache python3 make g++
 
-WORKDIR /app
+WORKDIR /build
 COPY package.json package-lock.json ./
-RUN npm ci
-COPY src ./src
+RUN npm ci --omit=dev
 
-# ── Production target — prune devDeps ────────────────────────────────────
-FROM build AS prod-deps
-RUN npm prune --omit=dev
-
+# ── Runtime stage ────────────────────────────────────────────────────────
 FROM node:24-alpine
 
 RUN deluser --remove-home node \
  && addgroup -g 1000 spire && adduser -u 1000 -G spire -s /bin/sh -D spire
 
 WORKDIR /app
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./
-COPY --from=build /app/src ./src
+COPY --from=build /build/node_modules ./node_modules
+COPY package.json ./
+COPY src ./src
 
 # /data is the writable volume for SQLite DB + uploaded files.
 # Spire creates files/, avatars/, emoji/ relative to CWD.

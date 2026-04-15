@@ -31,9 +31,7 @@ jobs:
               with:
                   node-version-file: .tool-versions
                   cache: npm
-
-            # ── Quick checks (no Docker, no native deps) ─────────────────
-            - run: npm ci --ignore-scripts
+            - run: npm ci
             - name: ESLint
               run: npm run lint
             - name: Prettier
@@ -51,13 +49,9 @@ jobs:
               run: npx @socketsecurity/cli@latest ci
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
-
-            # ── Docker build + test ──────────────────────────────────────
-            - name: Build CI image
-              run: docker build -f Dockerfile.ci -t spire-ci .
-            - name: Build production image
-              run: docker build -t spire .
             - name: tsc
-              run: docker run --rm -w /app spire-ci npx tsc
+              run: npm run build
             - name: Vitest
-              run: docker run --rm -w /app spire-ci npx vitest run
+              run: npm test
+            - name: Build production Docker image
+              run: docker build -t spire .
