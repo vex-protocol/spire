@@ -9,7 +9,7 @@
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/vex-protocol/spire-js?style=flat-square&label=Scorecard)](https://securityscorecards.dev/viewer/?uri=github.com/vex-protocol/spire-js)
 [![Socket](https://socket.dev/api/badge/npm/package/@vex-chat/spire)](https://socket.dev/npm/package/@vex-chat/spire)
 
-Reference server implementation for the [Vex](https://vex.wtf) encrypted chat platform. NodeJS + SQLite + TypeScript, running the wire protocol defined in [@vex-chat/types](https://github.com/vex-protocol/types-js).
+Reference server implementation for the [Vex](https://vex.wtf) protocol.
 
 ## What's in the box
 
@@ -36,21 +36,28 @@ cd spire-js
 npm ci
 ```
 
-## Running the server
+## Running the server (Docker)
 
-Spire runs directly from source via `node --experimental-strip-types` — no pre-compile step needed in dev or prod. From a clone:
+From a clone, with Docker and Docker Compose installed:
+
+```sh
+cp .env.example .env
+# set SPK, JWT_SECRET, DB_TYPE, … (see Configuration)
+docker compose up --build
+```
+
+Compose builds the image from this repo’s `Dockerfile`, starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and fronts it with **nginx** on **port 8080**. Use **http://localhost:8080** for HTTP and WebSocket.
+
+## Running without Docker
+
+For local development or if you installed from npm, Spire runs with `node --experimental-strip-types` (no separate compile step):
 
 ```sh
 npm start
+# or: node --experimental-strip-types src/run.ts
 ```
 
-Or equivalently:
-
-```sh
-node --experimental-strip-types src/run.ts
-```
-
-From an npm install, the source ships in the tarball under `node_modules/@vex-chat/spire/src/`, so you can run it directly:
+From an npm install, sources live under `node_modules/@vex-chat/spire/src/`:
 
 ```sh
 node --experimental-strip-types node_modules/@vex-chat/spire/src/run.ts
@@ -58,7 +65,7 @@ node --experimental-strip-types node_modules/@vex-chat/spire/src/run.ts
 
 ## Configuration
 
-Spire reads configuration from environment variables. Use a `.env` file at the repo root (or wherever you run it from) — `dotenv` picks it up automatically.
+Spire reads configuration from environment variables. **Docker Compose:** put them in a `.env` file next to `docker-compose.yml` (the `env_file` entry injects them into the container). **Bare Node:** `dotenv` loads `.env` from the process working directory when you run `src/run.ts`.
 
 ### Required
 
@@ -67,7 +74,6 @@ Spire reads configuration from environment variables. Use a `.env` file at the r
 | `SPK`        | Server private key, hex-encoded. Generate with `npm run gen-spk` (prints `SPK` and `JWT_SECRET` lines). Used for server identity signing (NaCl).                                                                                                                          |
 | `JWT_SECRET` | Hex or string used as the **HMAC secret for JWTs** — **required** and must be **separate from `SPK`**. `npm run gen-spk` emits a dedicated value; do not reuse `SPK` here.                                                                                                |
 | `DB_TYPE`    | `sqlite`, `sqlite3`, or `sqlite3mem`. All values use **SQLite** via `better-sqlite3` (file or `:memory:`). `sqlite3mem` is for tests. The string `mysql` is still accepted for compatibility but maps to the same SQLite setup as the default (there is no MySQL driver). |
-| `CANARY`     | `true` to enable canary mode (runs extra runtime assertions). `false` for standard production.                                                                                                                                                                            |
 
 ### Optional
 
@@ -76,6 +82,7 @@ Spire reads configuration from environment variables. Use a `.env` file at the r
 | `API_PORT`     | `16777`   | Port for the REST API and WebSocket server (see `Spire` default in code if unset).                                                                      |
 | `NODE_ENV`     | _(unset)_ | Set to `production` to disable interactive `/docs` / `/async-docs`. If unset or any other value, doc viewers are mounted. `helmet()` runs in all modes. |
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed `Origin` values for `cors`. If unset or empty, **no cross-origin browser access** (`origin: false`).                            |
+| `CANARY`       | _(unset)_ |                                                                                                                                                         |
 
 ### Sample `.env`
 
@@ -84,7 +91,7 @@ Spire reads configuration from environment variables. Use a `.env` file at the r
 SPK=a1b2c3...
 JWT_SECRET=d4e5f6...
 DB_TYPE=sqlite
-CANARY=false
+# CANARY=true
 API_PORT=16777
 NODE_ENV=production
 ```
