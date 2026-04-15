@@ -16,8 +16,8 @@ env:
     npm_config_engine_strict: "true"
 
 jobs:
-    checks:
-        name: Lint / Types / Supply Chain
+    ci:
+        name: CI
         runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
@@ -31,6 +31,8 @@ jobs:
               with:
                   node-version-file: .tool-versions
                   cache: npm
+
+            # ── Quick checks (no Docker, no native deps) ─────────────────
             - run: npm ci --ignore-scripts
             - name: ESLint
               run: npm run lint
@@ -50,45 +52,12 @@ jobs:
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
 
-    build-and-test:
-        name: Build & Test (Docker)
-        needs: checks
-        runs-on: ubuntu-latest
-        steps:
-            - name: Harden Runner
-              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-              with:
-                  egress-policy: audit
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Build Docker images
-              run: |
-                  docker build --target ci -t spire-ci .
-                  docker build -t spire .
+            # ── Docker build + test ──────────────────────────────────────
+            - name: Build CI image
+              run: docker build --target ci -f Dockerfile.ci -t spire-ci .
+            - name: Build production image
+              run: docker build -t spire .
             - name: tsc
               run: docker run --rm -w /app spire-ci npx tsc
             - name: Vitest
               run: docker run --rm -w /app spire-ci npx vitest run
-
-    # ── Single aggregator — the only required status check ────────────────
-
-    ci-ok:
-        name: CI OK
-        if: always()
-        needs:
-            - checks
-            - build-and-test
-        runs-on: ubuntu-latest
-        steps:
-            - name: Fail if any upstream job failed, was skipped, or cancelled
-              if: >-
-                  ${{ contains(needs.*.result, 'failure')
-                      || contains(needs.*.result, 'cancelled')
-                      || contains(needs.*.result, 'skipped') }}
-              run: |
-                  echo "One or more CI jobs did not succeed:"
-                  echo '${{ toJSON(needs) }}'
-                  exit 1
-            - name: All checks passed
-              run: echo "All CI jobs succeeded."
