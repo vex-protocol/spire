@@ -69,7 +69,7 @@ jobs:
               run: docker build -t spire .
             - name: Smoke test /status
               run: |
-                  docker run --rm spire node -e "
+                  docker run --rm --entrypoint node spire -e "
                     const nacl = require('tweetnacl');
                     const crypto = require('crypto');
                     const spk = Buffer.from(nacl.sign.keyPair().secretKey).toString('hex');

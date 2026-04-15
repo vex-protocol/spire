@@ -11,7 +11,12 @@ export default tseslint.config(
         plugins: { perfectionist },
         languageOptions: {
             parserOptions: {
-                projectService: true,
+                projectService: {
+                    allowDefaultProject: [
+                        "eslint.config.js",
+                        "vitest.config.ts",
+                    ],
+                },
                 tsconfigRootDir: import.meta.dirname,
             },
         },
