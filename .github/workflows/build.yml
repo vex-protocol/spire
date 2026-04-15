@@ -54,7 +54,7 @@ jobs:
 
             # ── Docker build + test ──────────────────────────────────────
             - name: Build CI image
-              run: docker build --target ci -f Dockerfile.ci -t spire-ci .
+              run: docker build -f Dockerfile.ci -t spire-ci .
             - name: Build production image
               run: docker build -t spire .
             - name: tsc
