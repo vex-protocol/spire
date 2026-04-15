@@ -12,6 +12,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 64
+    mem_limit: 512m
+    memswap_limit: 512m
     networks:
       - internal
     restart: unless-stopped
@@ -27,7 +30,8 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "8080:8080"
+    entrypoint: ["nginx", "-g", "daemon off;"]
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -48,7 +52,9 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-      - NET_BIND_SERVICE
+    pids_limit: 32
+    mem_limit: 128m
+    memswap_limit: 128m
     restart: unless-stopped
     logging:
       driver: none
