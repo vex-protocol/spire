@@ -28,7 +28,7 @@
         "format:check": "prettier --check .",
         "lint": "eslint src/",
         "lint:fix": "eslint src/ --fix",
-        "prepare": "husky",
+        "prepare": "husky || true",
         "test": "vitest run",
         "gen-spk": "node scripts/gen-spk.js",
         "docs": "node ./scripts/generate-docs.js",
