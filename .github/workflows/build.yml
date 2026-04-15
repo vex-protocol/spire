@@ -16,8 +16,8 @@ env:
     npm_config_engine_strict: "true"
 
 jobs:
-    ci:
-        name: CI
+    checks:
+        name: Checks
         runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
@@ -53,5 +53,43 @@ jobs:
               run: npm run build
             - name: Vitest
               run: npm test
-            - name: Build production Docker image
+
+    docker:
+        name: Docker
+        runs-on: ubuntu-latest
+        steps:
+            - name: Harden Runner
+              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+              with:
+                  egress-policy: audit
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  persist-credentials: false
+            - name: Build production image
               run: docker build -t spire .
+            - name: Smoke test /status
+              run: |
+                  docker run --rm -w /app spire node -e "
+                    const nacl = require('tweetnacl');
+                    const crypto = require('crypto');
+                    const spk = Buffer.from(nacl.sign.keyPair().secretKey).toString('hex');
+                    const jwt = crypto.randomBytes(32).toString('hex');
+                    console.log('SPK=' + spk);
+                    console.log('JWT_SECRET=' + jwt);
+                    console.log('DB_TYPE=sqlite3mem');
+                    console.log('CANARY=true');
+                  " > .env
+                  docker compose up -d
+                  for i in $(seq 1 30); do
+                    if curl -sf http://localhost:8080/status; then
+                      echo ""
+                      echo "Smoke test passed"
+                      docker compose down
+                      exit 0
+                    fi
+                    sleep 1
+                  done
+                  echo "Smoke test failed"
+                  docker compose logs
+                  docker compose down
+                  exit 1
