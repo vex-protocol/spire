@@ -38,7 +38,8 @@ services:
       spire:
         condition: service_healthy
     networks:
-      - internal
+      internal:
+      egress:
     read_only: true
     tmpfs:
       - /tmp
@@ -61,6 +62,9 @@ services:
 
 networks:
   internal:
+    driver: bridge
+    internal: true
+  egress:
     driver: bridge
 
 volumes:
