@@ -11,7 +11,6 @@ import type {
     User,
     UserRecord,
 } from "@vex-chat/types";
-import type winston from "winston";
 import type WebSocket from "ws";
 
 import { EventEmitter } from "events";
@@ -21,11 +20,9 @@ import { xConcat, XUtils } from "@vex-chat/crypto";
 import { xSignOpen } from "@vex-chat/crypto";
 import { MailWSSchema, SocketAuthErrors } from "@vex-chat/types";
 
-import pc from "picocolors";
 import { parse as uuidParse, validate as uuidValidate } from "uuid";
 
-import { type SpireOptions, TOKEN_EXPIRY } from "./Spire.ts";
-import { createLogger } from "./utils/createLogger.ts";
+import { TOKEN_EXPIRY } from "./Spire.ts";
 import { createUint8UUID } from "./utils/createUint8UUID.ts";
 import { msgpack } from "./utils/msgpack.ts";
 
@@ -50,7 +47,6 @@ export class ClientManager extends EventEmitter {
     private db: Database;
     private device: Device | null;
     private failed: boolean = false;
-    private log: winston.Logger;
     private notify: (
         userID: string,
         event: string,
@@ -66,7 +62,6 @@ export class ClientManager extends EventEmitter {
         db: Database,
         notify: (userID: string, event: string, transmissionID: string) => void,
         userDetails: User,
-        options?: SpireOptions,
     ) {
         super();
         this.conn = ws;
@@ -75,7 +70,6 @@ export class ClientManager extends EventEmitter {
         this.userDetails = userDetails;
         this.device = null;
         this.notify = notify;
-        this.log = createLogger("client-manager", options?.logLevel || "error");
 
         this.initListeners();
         this.challenge();
@@ -96,28 +90,11 @@ export class ClientManager extends EventEmitter {
     }
 
     public send(msg: BaseMsg, header?: Uint8Array) {
-        if (header) {
-            this.log.debug(pc.bold(pc.red("OUTH")), header.toString());
-        } else {
-            this.log.debug(pc.bold(pc.red("OUTH")), emptyHeader.toString());
-        }
-
         const packedMessage = packMessage(msg, header);
-
-        this.log.info(
-            pc.bold("⟶   ") +
-                responseColor(msg.type.toUpperCase()) +
-                " " +
-                this.toString() +
-                " " +
-                pc.yellow(Buffer.byteLength(packedMessage)),
-        );
-
-        this.log.debug(pc.bold(pc.red("OUT")), msg);
         try {
             this.conn.send(packedMessage);
-        } catch (err: unknown) {
-            this.log.warn(String(err));
+        } catch (_err: unknown) {
+            // debugger: WS send failed
             this.fail();
         }
     }
@@ -150,7 +127,6 @@ export class ClientManager extends EventEmitter {
         if (this.failed) {
             return;
         }
-        this.log.warn("Connection closed.");
         this.conn.close();
         this.failed = true;
         this.emit("fail");
@@ -173,12 +149,11 @@ export class ClientManager extends EventEmitter {
             this.fail();
         });
         this.conn.on("message", (message: Buffer) => {
-            const [header, msg] = unpackMessage(message);
             const size = Buffer.byteLength(message);
 
             if (size > MAX_MSG_SIZE) {
                 this.sendErr(
-                    msg.transmissionID,
+                    "00000000-0000-0000-0000-000000000000",
                     "Message is too big. Received size " +
                         String(size) +
                         " while max size is " +
@@ -187,16 +162,7 @@ export class ClientManager extends EventEmitter {
                 return;
             }
 
-            this.log.info(
-                pc.bold("⟵   ") +
-                    pc.bold(msg.type.toUpperCase()) +
-                    " " +
-                    this.toString() +
-                    " " +
-                    pc.yellow(String(size)),
-            );
-            this.log.debug(pc.bold(pc.red("INH")), header.toString());
-            this.log.debug(pc.bold(pc.red("IN")), msg);
+            const [header, msg] = unpackMessage(message);
 
             if (!msg.type) {
                 this.sendErr(msg.transmissionID, "Message type is required.");
@@ -238,7 +204,6 @@ export class ClientManager extends EventEmitter {
                     void this.verifyResponse(msg as RespMsg);
                     break;
                 default:
-                    this.log.info("unsupported message %s", msg.type);
                     break;
             }
         });
@@ -266,8 +231,6 @@ export class ClientManager extends EventEmitter {
                             this.getDevice().deviceID,
                             this.getUser().userID,
                         );
-                        this.log.info("Received mail for " + mail.recipient);
-
                         const deviceDetails = await this.db.retrieveDevice(
                             mail.recipient,
                         );
@@ -288,13 +251,12 @@ export class ClientManager extends EventEmitter {
                             mail.recipient,
                         );
                     } catch (err: unknown) {
-                        this.log.error(String(err));
                         this.sendErr(msg.transmissionID, String(err));
                     }
                 }
                 break;
             default:
-                this.log.info("Unsupported resource type " + msg.resourceType);
+                break;
         }
     }
 
@@ -384,7 +346,6 @@ export class ClientManager extends EventEmitter {
                 }
             }
             if (!message) {
-                this.log.warn("Signature verification failed!");
                 this.sendAuthError(SocketAuthErrors.BadSignature);
                 this.fail();
                 return;
@@ -394,11 +355,9 @@ export class ClientManager extends EventEmitter {
                 this.user = user;
                 this.authorize(msg.transmissionID);
             } else {
-                this.log.warn("Token is bad!");
                 this.sendAuthError(SocketAuthErrors.InvalidToken);
             }
         } else {
-            this.log.info("User is not registered.");
             this.sendAuthError(SocketAuthErrors.UserNotRegistered);
 
             this.fail();
@@ -421,14 +380,3 @@ function unpackMessage(msg: Buffer): [Uint8Array, BaseMsg] {
 
     return [msgh, msgb];
 }
-
-const responseColor = (status: string): string => {
-    switch (status) {
-        case "ERROR":
-            return pc.bold(pc.red(status));
-        case "SUCCESS":
-            return pc.bold(pc.green(status));
-        default:
-            return status;
-    }
-};

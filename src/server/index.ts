@@ -1,6 +1,5 @@
 import type { Database } from "../Database.ts";
 import type { Emoji } from "@vex-chat/types";
-import type winston from "winston";
 
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -156,8 +155,6 @@ export const msgpackParser: express.RequestHandler = (req, res, next) => {
     next();
 };
 
-const isProduction = process.env["NODE_ENV"] === "production";
-
 const directories = ["files", "avatars"];
 for (const dir of directories) {
     if (!fs.existsSync(dir)) {
@@ -168,7 +165,6 @@ for (const dir of directories) {
 export const initApp = (
     api: express.Application,
     db: Database,
-    log: winston.Logger,
     tokenValidator: (key: string, scope: TokenScopes) => boolean,
     signKeys: KeyPair,
     notify: (
@@ -180,10 +176,10 @@ export const initApp = (
     ) => void,
 ) => {
     // INIT ROUTERS
-    const userRouter = getUserRouter(db, log, tokenValidator);
-    const fileRouter = getFileRouter(db, log);
-    const avatarRouter = getAvatarRouter(db, log);
-    const inviteRouter = getInviteRouter(db, log, tokenValidator, notify);
+    const userRouter = getUserRouter(db, tokenValidator);
+    const fileRouter = getFileRouter(db);
+    const avatarRouter = getAvatarRouter();
+    const inviteRouter = getInviteRouter(db, tokenValidator, notify);
 
     // MIDDLEWARE
     // Global per-IP rate limit is the FIRST middleware so a flooded
@@ -197,9 +193,7 @@ export const initApp = (
             type: "application/msgpack",
         }),
     );
-    if (isProduction) {
-        api.use(helmet());
-    }
+    api.use(helmet());
     api.use(msgpackParser);
     api.use(checkAuth);
     api.use(checkDevice);
@@ -208,7 +202,13 @@ export const initApp = (
         api.use(morgan("dev", { stream: process.stdout }));
     }
 
-    api.use(cors({ credentials: true }));
+    const allowedOrigins = process.env["CORS_ORIGINS"]?.split(",") ?? [];
+    api.use(
+        cors({
+            credentials: true,
+            origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+        }),
+    );
 
     api.get("/server/:id", protect, async (req, res) => {
         const server = await db.retrieveServer(getParam(req, "id"));
@@ -259,7 +259,6 @@ export const initApp = (
                 POWER_LEVELS.INVITE,
             )
         ) {
-            log.warn("No permission!");
             res.sendStatus(401);
             return;
         }
@@ -649,8 +648,8 @@ export const initApp = (
         res.set("Cache-control", "public, max-age=31536000");
 
         const stream = fs.createReadStream(filePath);
-        stream.on("error", (err) => {
-            log.error(err.toString());
+        stream.on("error", (_err) => {
+            // debugger: emoji stream read error
             res.sendStatus(500);
         });
         stream.pipe(res);
@@ -703,10 +702,11 @@ export const initApp = (
         }
         if (!payload.name) {
             res.sendStatus(400);
+            return;
         }
         if (Buffer.byteLength(buf) > 256000) {
-            log.warn("File too big.");
             res.sendStatus(413);
+            return;
         }
 
         const mimeType = await fileTypeFromBuffer(buf);
@@ -730,10 +730,9 @@ export const initApp = (
         try {
             // write the file to disk
             await fsp.writeFile("emoji/" + emoji.emojiID, buf);
-            log.info("Wrote new emoji " + emoji.emojiID);
             res.send(msgpack.encode(emoji));
-        } catch (err: unknown) {
-            log.warn(String(err));
+        } catch (_err: unknown) {
+            // debugger: emoji write failed
             res.sendStatus(500);
         }
     });
@@ -786,17 +785,17 @@ export const initApp = (
 
             if (!payload.name) {
                 res.sendStatus(400);
+                return;
             }
 
             if (!req.file) {
-                log.warn("MISSING FILE");
                 res.sendStatus(400);
                 return;
             }
 
             if (Buffer.byteLength(req.file.buffer) > 256000) {
-                log.warn("File too big.");
                 res.sendStatus(413);
+                return;
             }
 
             const mimeType = await fileTypeFromBuffer(req.file.buffer);
@@ -820,10 +819,9 @@ export const initApp = (
             try {
                 // write the file to disk
                 await fsp.writeFile("emoji/" + emoji.emojiID, req.file.buffer);
-                log.info("Wrote new emoji " + emoji.emojiID);
                 res.send(msgpack.encode(emoji));
-            } catch (err: unknown) {
-                log.warn(String(err));
+            } catch (_err: unknown) {
+                // debugger: emoji write failed
                 res.sendStatus(500);
             }
         },
@@ -844,7 +842,7 @@ export const initApp = (
     // (client-safe status + message) and programmer errors (generic 500
     // with full details logged server-side). See src/server/errors.ts
     // for the CWE mapping.
-    api.use(errorHandler(log));
+    api.use(errorHandler());
 };
 
 /**

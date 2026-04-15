@@ -7,8 +7,8 @@ import eslintConfigPrettier from "eslint-config-prettier/flat";
 export default tseslint.config(
     ...tseslint.configs.strictTypeChecked,
     n.configs["flat/recommended"],
-    perfectionist.configs["recommended-natural"],
     {
+        plugins: { perfectionist },
         languageOptions: {
             parserOptions: {
                 projectService: true,
@@ -27,7 +27,14 @@ export default tseslint.config(
             "@typescript-eslint/require-await": "error",
             "@typescript-eslint/restrict-plus-operands": "error",
             "@typescript-eslint/no-misused-promises": "error",
-            "@typescript-eslint/no-unused-vars": "error",
+            "@typescript-eslint/no-unused-vars": [
+                "error",
+                {
+                    argsIgnorePattern: "^_",
+                    caughtErrorsIgnorePattern: "^_",
+                    varsIgnorePattern: "^_",
+                },
+            ],
             "@typescript-eslint/prefer-promise-reject-errors": "error",
             "@typescript-eslint/no-unnecessary-type-assertion": "error",
 
