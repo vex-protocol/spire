@@ -1,4 +1,4 @@
-# ── Build stage ──────────────────────────────────────────────────────────
+# ── Build stage (prod deps only) ─────────────────────────────────────────
 FROM node:24-alpine AS build
 
 # argon2 compiles native C code via node-gyp
@@ -7,6 +7,16 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+
+# ── CI stage (all deps — tsc, vitest, eslint, etc.) ─────────────────────
+FROM node:24-alpine AS ci
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY src ./src
 
 # ── Runtime stage ────────────────────────────────────────────────────────
 FROM node:24-alpine
