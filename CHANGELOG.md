@@ -1,5 +1,11 @@
 # @vex-chat/spire
 
+## 1.0.2
+
+### Patch Changes
+
+- 335818e: Bumps the `@vex-chat/crypto` dependency from `2.0.0` to `2.0.1`. No API or config changes required.
+
 ## 1.0.1
 
 ### Patch Changes
