@@ -271,8 +271,7 @@ export class ClientManager extends EventEmitter {
     }
 
     private async pingLoop() {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite loop
-        while (true) {
+        while (!this.failed) {
             this.ping();
             await sleep(5000);
         }

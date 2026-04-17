@@ -23,7 +23,7 @@
         "preinstall": "npx only-allow npm",
         "start": "node --experimental-strip-types src/run.ts",
         "restart": "pm2 restart spire && pm2 logs spire",
-        "build": "tsc",
+        "build": "tsc && node scripts/clean-dist-tests.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "lint": "eslint src/",

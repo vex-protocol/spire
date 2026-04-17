@@ -190,13 +190,22 @@ export class Spire extends EventEmitter {
 
     private async bootstrapRequestCounter(): Promise<void> {
         const persistedTotal = await this.db.getRequestsTotal();
+
+        // Between the await above and this synchronous block, requests may
+        // have incremented both `requestsTotal` and `queuedRequestIncrements`.
+        // Capture the queue, mark loaded, then merge — never overwrite
+        // `requestsTotal` (which already includes in-flight increments).
         const startupIncrements = this.queuedRequestIncrements;
         this.queuedRequestIncrements = 0;
-        this.requestsTotal = persistedTotal + startupIncrements;
+        this.requestsTotalLoaded = true;
+
+        // Add the persisted baseline on top of whatever the middleware
+        // already counted in-memory, instead of overwriting it.
+        this.requestsTotal += persistedTotal;
+
         if (startupIncrements > 0) {
             await this.db.incrementRequestsTotal(startupIncrements);
         }
-        this.requestsTotalLoaded = true;
     }
 
     private createActionToken(scope: TokenScopes): ActionToken {
@@ -210,8 +219,9 @@ export class Spire extends EventEmitter {
     }
 
     private deleteActionToken(key: ActionToken) {
-        if (this.actionTokens.includes(key)) {
-            this.actionTokens.splice(this.actionTokens.indexOf(key), 1);
+        const idx = this.actionTokens.indexOf(key);
+        if (idx !== -1) {
+            this.actionTokens.splice(idx, 1);
         }
     }
 
@@ -286,11 +296,9 @@ export class Spire extends EventEmitter {
                     );
 
                     client.on("fail", () => {
-                        if (this.clients.includes(client)) {
-                            this.clients.splice(
-                                this.clients.indexOf(client),
-                                1,
-                            );
+                        const idx = this.clients.indexOf(client);
+                        if (idx !== -1) {
+                            this.clients.splice(idx, 1);
                         }
                     });
 
@@ -763,7 +771,10 @@ export class Spire extends EventEmitter {
         data?: unknown,
         deviceID?: string,
     ): void {
-        for (const client of this.clients) {
+        // Snapshot the array so that a synchronous `fail` → splice inside
+        // client.send() doesn't corrupt the iteration.
+        const snapshot = this.clients.slice();
+        for (const client of snapshot) {
             if (deviceID) {
                 if (client.getDevice().deviceID === deviceID) {
                     const msg: NotifyMsg = {

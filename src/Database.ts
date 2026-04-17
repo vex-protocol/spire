@@ -230,30 +230,31 @@ export class Database extends EventEmitter {
         resourceID: string,
         powerLevel: number,
     ): Promise<Permission> {
-        const permissionID = crypto.randomUUID();
+        // Atomic check-then-insert inside a transaction so two concurrent
+        // callers cannot both find "no existing" and insert duplicates.
+        return this.db.transaction().execute(async (trx) => {
+            const checkPermission = await trx
+                .selectFrom("permissions")
+                .selectAll()
+                .where("userID", "=", userID)
+                .where("resourceID", "=", resourceID)
+                .execute();
+            const existing = checkPermission[0];
+            if (existing) {
+                return existing;
+            }
 
-        // check if it already exists
-        const checkPermission = await this.db
-            .selectFrom("permissions")
-            .selectAll()
-            .where("userID", "=", userID)
-            .where("resourceID", "=", resourceID)
-            .execute();
-        const existing = checkPermission[0];
-        if (existing) {
-            return existing;
-        }
+            const permission: Permission = {
+                permissionID: crypto.randomUUID(),
+                powerLevel,
+                resourceID,
+                resourceType,
+                userID,
+            };
 
-        const permission: Permission = {
-            permissionID,
-            powerLevel,
-            resourceID,
-            resourceType,
-            userID,
-        };
-
-        await this.db.insertInto("permissions").values(permission).execute();
-        return permission;
+            await trx.insertInto("permissions").values(permission).execute();
+            return permission;
+        });
     }
 
     public async createServer(name: string, ownerID: string): Promise<Server> {
@@ -405,31 +406,34 @@ export class Database extends EventEmitter {
     }
 
     public async getOTK(deviceID: string): Promise<null | PreKeysWS> {
-        const rows: PreKeysSQL[] = await this.db
-            .selectFrom("oneTimeKeys")
-            .selectAll()
-            .where("deviceID", "=", deviceID)
-            .orderBy("index")
-            .limit(1)
-            .execute();
-        const otkInfo = rows[0];
-        if (!otkInfo) {
-            return null;
-        }
-        const otk: PreKeysWS = {
-            deviceID: otkInfo.deviceID,
-            index: otkInfo.index,
-            publicKey: XUtils.decodeHex(otkInfo.publicKey),
-            signature: XUtils.decodeHex(otkInfo.signature),
-        };
+        // Atomic select-then-delete inside a transaction so two concurrent
+        // callers cannot dispense the same one-time key.
+        return this.db.transaction().execute(async (trx) => {
+            const rows: PreKeysSQL[] = await trx
+                .selectFrom("oneTimeKeys")
+                .selectAll()
+                .where("deviceID", "=", deviceID)
+                .orderBy("index")
+                .limit(1)
+                .execute();
+            const otkInfo = rows[0];
+            if (!otkInfo) {
+                return null;
+            }
 
-        // delete the otk
-        await this.db
-            .deleteFrom("oneTimeKeys")
-            .where("deviceID", "=", deviceID)
-            .where("index", "=", otk.index)
-            .execute();
-        return otk;
+            await trx
+                .deleteFrom("oneTimeKeys")
+                .where("deviceID", "=", deviceID)
+                .where("index", "=", otkInfo.index)
+                .execute();
+
+            return {
+                deviceID: otkInfo.deviceID,
+                index: otkInfo.index,
+                publicKey: XUtils.decodeHex(otkInfo.publicKey),
+                signature: XUtils.decodeHex(otkInfo.signature),
+            };
+        });
     }
 
     public async getOTKCount(deviceID: string): Promise<number> {
