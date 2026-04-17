@@ -1,3 +1,37 @@
+import type { Request } from "express";
+
+import { timingSafeEqual } from "node:crypto";
+
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+
+/** Header clients send to match {@link process.env.SPIRE_STRESS_BYPASS_KEY}. */
+export const SPIRE_STRESS_BYPASS_HEADER = "x-spire-stress-bypass";
+
+/**
+ * When `SPIRE_STRESS_BYPASS_KEY` is set in the environment, any request whose
+ * `X-Spire-Stress-Bypass` header matches (constant-time) skips all in-process
+ * rate limiters. Intended only for local load testing — never set the env var
+ * in production.
+ */
+export function stressRateLimitBypass(req: Request): boolean {
+    const configured = process.env["SPIRE_STRESS_BYPASS_KEY"];
+    if (!configured || configured.length === 0) {
+        return false;
+    }
+    const presented = req.get(SPIRE_STRESS_BYPASS_HEADER);
+    if (!presented || presented.length !== configured.length) {
+        return false;
+    }
+    try {
+        return timingSafeEqual(
+            Buffer.from(presented, "utf8"),
+            Buffer.from(configured, "utf8"),
+        );
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Rate limiting middleware.
  *
@@ -21,9 +55,6 @@
  * `trust proxy` must be set on the Express app (see Spire.ts) so
  * `req.ip` returns the real client address, not the immediate proxy.
  */
-import type { Request } from "express";
-
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 /**
  * Bucket requests by the real client IP, IPv6-safe.
@@ -46,6 +77,7 @@ export const globalLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 3000,
+    skip: stressRateLimitBypass,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
 });
@@ -63,6 +95,7 @@ export const authLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 50,
+    skip: stressRateLimitBypass,
     skipSuccessfulRequests: true,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
@@ -81,6 +114,7 @@ export const uploadLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 200,
+    skip: stressRateLimitBypass,
     standardHeaders: "draft-7",
     windowMs: 60 * 1000,
 });

@@ -70,7 +70,7 @@ Spire reads configuration from environment variables. **Docker Compose:** put th
 | -------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_PORT`     | `16777`   | Port for the REST API and WebSocket server (see `Spire` default in code if unset).                                                                      |
 | `NODE_ENV`     | _(unset)_ | Set to `production` to disable interactive `/docs` / `/async-docs`. If unset or any other value, doc viewers are mounted. `helmet()` runs in all modes. |
-| `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed `Origin` values for `cors`. If unset or empty, **no cross-origin browser access** (`origin: false`).                            |
+| `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed `Origin` values. If set, only those origins may use credentialed browser requests. If unset, Spire **reflects the request `Origin`** so self-hosted Spire and arbitrary app origins (Tauri, localhost, etc.) work without configuration — appropriate for bearer-token APIs; set an allowlist if you need to restrict which sites may call your instance from users' browsers. |
 | `CANARY`       | _(unset)_ |                                                                                                                                                         |
 
 ### Sample `.env`
