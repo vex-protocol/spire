@@ -38,6 +38,7 @@
  * Time cap (stress:cli matrix / unattended soak): SPIRE_STRESS_MAX_WALL_SEC=N stops the flood loop after N seconds
  * of wall time (flood walls + any paced idle gaps). Works with SPIRE_STRESS_FOREVER=1. See npm run stress:cli.
  * Client teardown: SPIRE_STRESS_CLIENT_CLOSE_MS caps how long `Client.close()` may run (default 120000); harness then calls process.exit.
+ * Facet report (stdout, same surfaces as web UI): default when SPIRE_STRESS_WEB=0; SPIRE_STRESS_FACET_REPORT=0 off, =1 force, =all include idle. JSON: SPIRE_STRESS_JSON=1 adds `facets`. stress:cli sets SPIRE_STRESS_FACET_DEFER=1 and SPIRE_STRESS_FACET_DUMP_PATH so children skip stdout and the parent prints one merged table after the matrix.
  *
  * Web dashboard: POST /api/restart-run queues a full session restart (clients + load mode + concurrency)
  * after the current flood wall (see Session controls in scripts/stress/web/index.html).
@@ -52,7 +53,7 @@ import type { Client } from "@vex-chat/libvex";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import { tmpdir } from "node:os";
@@ -98,6 +99,7 @@ import {
 } from "./stress-reachability.ts";
 import { StressRestartQueue } from "./stress-restart-queue.ts";
 import {
+    formatStressFacetCiReport,
     type StressRunSummary,
     writeStressRunSummary,
 } from "./stress-summary.ts";
@@ -705,6 +707,16 @@ async function main(): Promise<void> {
     const stressQuietCli =
         process.env["SPIRE_STRESS_WEB"] === "0" &&
         process.env["SPIRE_STRESS_VERBOSE"] !== "1";
+    /** When set (e.g. stress:cli), skip printing the facet table here; still write dump if `SPIRE_STRESS_FACET_DUMP_PATH` is set. */
+    const facetDefer = process.env["SPIRE_STRESS_FACET_DEFER"] === "1";
+    /** Per-surface ok/fail table on stdout (default on when quiet/CI). Set `SPIRE_STRESS_FACET_REPORT=0` to skip, `=1` to force, `=all` to include idle facets. */
+    const facetReportWanted =
+        !facetDefer &&
+        (process.env["SPIRE_STRESS_FACET_REPORT"] === "1" ||
+            (process.env["SPIRE_STRESS_FACET_REPORT"] !== "0" &&
+                stressQuietCli));
+    const facetReportIncludeIdle =
+        process.env["SPIRE_STRESS_FACET_REPORT"] === "all";
 
     const knobsRef = { knobs: new StressKnobs(initialConcurrency) };
     /** Ref object; read stop via `stressRunShouldStop()` so async loops are not wrongly narrowed. */
@@ -805,26 +817,26 @@ async function main(): Promise<void> {
         let sessionBurstGapMs = burstGapMs;
 
         const webEnabled = process.env["SPIRE_STRESS_WEB"] !== "0";
-        const telemetry = webEnabled ? new StressTelemetry(scenario) : null;
-        const uiPortRaw = process.env["SPIRE_STRESS_UI_PORT"] ?? "18777";
-        const uiPortParsed = Number(uiPortRaw);
-        const uiPort =
-            Number.isFinite(uiPortParsed) &&
-            uiPortParsed >= 1 &&
-            uiPortParsed <= 65_535
-                ? Math.floor(uiPortParsed)
-                : 18_777;
-        if (telemetry !== null) {
-            telemetryRef.current = telemetry;
-            telemetry.setRunBanner({
-                burstGapMs: sessionBurstGapMs,
-                clientCount: sessionClientCount,
-                concurrency: knobsRef.knobs.concurrency,
-                forever,
-                host,
-                loadPacing: sessionLoadPacing,
-                plannedRounds,
-            });
+        const telemetry = new StressTelemetry(scenario);
+        telemetryRef.current = telemetry;
+        telemetry.setRunBanner({
+            burstGapMs: sessionBurstGapMs,
+            clientCount: sessionClientCount,
+            concurrency: knobsRef.knobs.concurrency,
+            forever,
+            host,
+            loadPacing: sessionLoadPacing,
+            plannedRounds,
+        });
+        if (webEnabled) {
+            const uiPortRaw = process.env["SPIRE_STRESS_UI_PORT"] ?? "18777";
+            const uiPortParsed = Number(uiPortRaw);
+            const uiPort =
+                Number.isFinite(uiPortParsed) &&
+                uiPortParsed >= 1 &&
+                uiPortParsed <= 65_535
+                    ? Math.floor(uiPortParsed)
+                    : 18_777;
             webHandle = await startStressWebServer(telemetry, uiPort, {
                 restartQueue,
                 scenario,
@@ -864,7 +876,7 @@ async function main(): Promise<void> {
             crashCtx.chatWorld = null;
             crashCtx.noiseWorld = null;
 
-            telemetry?.resetSessionForNewRun({
+            telemetry.resetSessionForNewRun({
                 burstGapMs: sessionBurstGapMs,
                 clientCount: sessionClientCount,
                 concurrency: knobsRef.knobs.concurrency,
@@ -873,7 +885,7 @@ async function main(): Promise<void> {
                 loadPacing: sessionLoadPacing,
                 plannedRounds,
             });
-            telemetry?.setRestartPending(false);
+            telemetry.setRestartPending(false);
 
             if (useUi) {
                 if (dashboard !== null) {
@@ -903,7 +915,7 @@ async function main(): Promise<void> {
 
             const clients: Client[] = [];
             crashCtx.phase = "bootstrap";
-            telemetry?.setPhase("bootstrap");
+            telemetry.setPhase("bootstrap");
             dashboard?.setState({ phase: "bootstrap", currentBurst: 0 });
 
             for (let i = 0; i < sessionClientCount; i++) {
@@ -971,7 +983,7 @@ async function main(): Promise<void> {
 
             dashboard?.setState({ phase: "flood" });
             crashCtx.phase = "flood";
-            telemetry?.setPhase("flood");
+            telemetry.setPhase("flood");
 
             let burst = 0;
             let sessionRestart = false;
@@ -1002,8 +1014,8 @@ async function main(): Promise<void> {
                 knobsRef.knobs = new StressKnobs(
                     Math.max(1, Math.floor(next.concurrency)),
                 );
-                telemetry?.setConcurrency(knobsRef.knobs.concurrency);
-                telemetry?.setRestartPending(false);
+                telemetry.setConcurrency(knobsRef.knobs.concurrency);
+                telemetry.setRestartPending(false);
                 return true;
             };
 
@@ -1053,8 +1065,8 @@ async function main(): Promise<void> {
                     });
                     burstWallMs.push(dt);
                     completedHttpOps += ops;
-                    telemetry?.setBurstContext(burst, n);
-                    telemetry?.setProgress(
+                    telemetry.setBurstContext(burst, n);
+                    telemetry.setProgress(
                         completedHttpOps,
                         dt,
                         offeredSlotsPerSec,
@@ -1079,7 +1091,7 @@ async function main(): Promise<void> {
                             wallIndex: burst,
                             wallTotal: null,
                         });
-                    } else if (telemetry !== null || !useUi) {
+                    } else if (!useUi) {
                         process.stderr.write(
                             `[stress] wall ${String(burst)}  ${String(dt)}ms wall  ops=${String(ops)}  conc=${String(n)}  offered≈${String(offeredSlotsPerSec)} slots/s\n`,
                         );
@@ -1167,8 +1179,8 @@ async function main(): Promise<void> {
                     });
                     burstWallMs.push(dt);
                     completedHttpOps += ops;
-                    telemetry?.setBurstContext(burst, n);
-                    telemetry?.setProgress(
+                    telemetry.setBurstContext(burst, n);
+                    telemetry.setProgress(
                         completedHttpOps,
                         dt,
                         offeredSlotsPerSec,
@@ -1193,7 +1205,7 @@ async function main(): Promise<void> {
                             wallIndex: burst,
                             wallTotal: plannedRounds,
                         });
-                    } else if (telemetry !== null || !useUi) {
+                    } else if (!useUi) {
                         process.stderr.write(
                             `[stress] wall ${String(burst)}/${String(plannedRounds)}  ${String(dt)}ms wall  ops=${String(ops)}  conc=${String(n)}  offered≈${String(offeredSlotsPerSec)} slots/s\n`,
                         );
@@ -1286,11 +1298,41 @@ async function main(): Promise<void> {
         };
 
         crashCtx.phase = "done";
+        telemetry.setPhase("done");
         dashboard?.setState({ phase: "done" });
+        const facetSnap = telemetry.getSnapshot();
+        const facetDumpPath =
+            process.env["SPIRE_STRESS_FACET_DUMP_PATH"]?.trim() ?? "";
+        if (facetDumpPath.length > 0) {
+            try {
+                writeFileSync(
+                    facetDumpPath,
+                    `${JSON.stringify({
+                        v: 1 as const,
+                        scenario,
+                        host,
+                        facets: facetSnap.facets,
+                    })}\n`,
+                    "utf8",
+                );
+            } catch {
+                /* ignore */
+            }
+        }
         if (dashboard !== null) {
             dashboard.renderFinalSummary(summary);
         } else {
-            writeStressRunSummary(summary, { quiet: stressQuietCli });
+            writeStressRunSummary(summary, {
+                facetSnapshot: facetSnap,
+                quiet: stressQuietCli,
+            });
+            if (facetReportWanted) {
+                process.stdout.write(
+                    formatStressFacetCiReport(facetSnap, {
+                        includeIdle: facetReportIncludeIdle,
+                    }),
+                );
+            }
         }
 
         if (httpFailureTotal(lastHttpStats) > 0) {
