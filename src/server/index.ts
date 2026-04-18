@@ -197,11 +197,25 @@ export const initApp = (
     api.use(checkAuth);
     api.use(checkDevice);
 
-    const allowedOrigins = process.env["CORS_ORIGINS"]?.split(",") ?? [];
+    // Browser clients (web, Tauri, Capacitor, etc.) hit Spire from arbitrary
+    // origins when self-hosted or embedded in third-party apps. libvex uses
+    // `Authorization: Bearer` only (no cookies), so reflecting `Origin` is the
+    // usual bearer-API pattern. Set `CORS_ORIGINS` to a comma-separated allowlist
+    // when an operator wants to restrict which frontends may call the API.
+    const corsRaw = process.env["CORS_ORIGINS"];
+    const corsOrigins = corsRaw
+        ? corsRaw
+              .split(",")
+              .map((o) => o.trim())
+              .filter((o) => o.length > 0)
+        : [];
     api.use(
         cors({
             credentials: true,
-            origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+            origin:
+                corsOrigins.length > 0
+                    ? corsOrigins
+                    : true /* reflect request Origin */,
         }),
     );
 

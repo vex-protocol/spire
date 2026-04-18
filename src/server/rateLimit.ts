@@ -1,3 +1,37 @@
+import type { Request } from "express";
+
+import { timingSafeEqual } from "node:crypto";
+
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+
+/** HTTP header carrying the dev API key (must match {@link process.env.DEV_API_KEY}). */
+export const DEV_API_KEY_HEADER = "x-dev-api-key";
+
+/**
+ * When `DEV_API_KEY` is set in the environment, any request whose
+ * `x-dev-api-key` header matches (constant-time) skips all in-process rate
+ * limiters. Dev / load-testing escape hatch only — never set in production.
+ * (Future: first-class API keys with scopes may reuse this header name.)
+ */
+export function devApiKeySkipsRateLimits(req: Request): boolean {
+    const configured = process.env["DEV_API_KEY"]?.trim() ?? "";
+    if (configured.length === 0) {
+        return false;
+    }
+    const presented = req.get(DEV_API_KEY_HEADER);
+    if (!presented || presented.length !== configured.length) {
+        return false;
+    }
+    try {
+        return timingSafeEqual(
+            Buffer.from(presented, "utf8"),
+            Buffer.from(configured, "utf8"),
+        );
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Rate limiting middleware.
  *
@@ -21,9 +55,6 @@
  * `trust proxy` must be set on the Express app (see Spire.ts) so
  * `req.ip` returns the real client address, not the immediate proxy.
  */
-import type { Request } from "express";
-
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 /**
  * Bucket requests by the real client IP, IPv6-safe.
@@ -46,6 +77,7 @@ export const globalLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 3000,
+    skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
 });
@@ -63,6 +95,7 @@ export const authLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 50,
+    skip: devApiKeySkipsRateLimits,
     skipSuccessfulRequests: true,
     standardHeaders: "draft-7",
     windowMs: 15 * 60 * 1000,
@@ -81,6 +114,7 @@ export const uploadLimiter = rateLimit({
     keyGenerator: keyByIp,
     legacyHeaders: false,
     limit: 200,
+    skip: devApiKeySkipsRateLimits,
     standardHeaders: "draft-7",
     windowMs: 60 * 1000,
 });

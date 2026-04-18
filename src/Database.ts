@@ -21,6 +21,7 @@ import type { Migration, MigrationProvider } from "kysely";
 
 import { EventEmitter } from "events";
 import { pbkdf2Sync } from "node:crypto";
+import { statSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -119,6 +120,22 @@ export interface InternalUserRecord extends UserRecord {
 export class Database extends EventEmitter {
     private db: Kysely<ServerDatabase>;
 
+    /** Underlying better-sqlite3 handle (file or :memory:). */
+    private readonly rawSqlite: InstanceType<typeof BetterSqlite3>;
+
+    /**
+     * In-process cache for {@link retrieveUserDeviceList} when queried for a
+     * single owner. Libvex calls GET /user/:id/devices on every outgoing
+     * `forward()`; stress runs otherwise hammer SQLite with identical reads.
+     * Cleared on device create/delete and when the DB is closed.
+     */
+    private readonly userDeviceListCache = new Map<
+        string,
+        { devices: Device[]; until: number }
+    >();
+
+    private static readonly USER_DEVICE_LIST_CACHE_TTL_MS = 10_000;
+
     constructor(options?: SpireOptions) {
         super();
 
@@ -138,22 +155,85 @@ export class Database extends EventEmitter {
                 break;
         }
 
-        const sqliteDb = new BetterSqlite3(filename);
-        sqliteDb.pragma("journal_mode = WAL");
-        sqliteDb.pragma("synchronous = NORMAL");
-        sqliteDb.pragma("busy_timeout = 5000");
-        sqliteDb.pragma("cache_size = -64000");
-        sqliteDb.pragma("temp_store = memory");
-        sqliteDb.pragma("foreign_keys = ON");
+        this.rawSqlite = new BetterSqlite3(filename);
+        this.rawSqlite.pragma("journal_mode = WAL");
+        this.rawSqlite.pragma("synchronous = NORMAL");
+        this.rawSqlite.pragma("busy_timeout = 5000");
+        this.rawSqlite.pragma("cache_size = -64000");
+        this.rawSqlite.pragma("temp_store = memory");
+        this.rawSqlite.pragma("foreign_keys = ON");
 
         this.db = new Kysely<ServerDatabase>({
-            dialect: new SqliteDialect({ database: sqliteDb }),
+            dialect: new SqliteDialect({ database: this.rawSqlite }),
         });
 
         void this.init();
     }
 
+    /**
+     * Dev-only snapshot of SQLite files + pragmas (same process as Spire).
+     * Not for production callers.
+     */
+    public getDevSqliteMonitor(): Record<string, unknown> {
+        const openedAs = this.rawSqlite.name;
+        const absPath =
+            openedAs === ":memory:"
+                ? ":memory:"
+                : path.isAbsolute(openedAs)
+                  ? openedAs
+                  : path.resolve(process.cwd(), openedAs);
+
+        const journalMode = this.rawSqlite.pragma("journal_mode", {
+            simple: true,
+        });
+        const synchronous = this.rawSqlite.pragma("synchronous", {
+            simple: true,
+        });
+        const busyTimeout = this.rawSqlite.pragma("busy_timeout", {
+            simple: true,
+        });
+        const cacheSize = this.rawSqlite.pragma("cache_size", { simple: true });
+        const pageCount = this.rawSqlite.pragma("page_count", { simple: true });
+        const pageSize = this.rawSqlite.pragma("page_size", { simple: true });
+        const freelistCount = this.rawSqlite.pragma("freelist_count", {
+            simple: true,
+        });
+
+        const out: Record<string, unknown> = {
+            absPath,
+            busyTimeout,
+            cacheSize,
+            freelistCount,
+            journalMode,
+            openedAs,
+            pageCount,
+            pageSize,
+            synchronous,
+        };
+
+        if (openedAs !== ":memory:") {
+            const filePaths = {
+                main: absPath,
+                shm: `${absPath}-shm`,
+                wal: `${absPath}-wal`,
+            };
+            out["filePaths"] = filePaths;
+            const sizes: Record<string, number> = {};
+            for (const [label, fp] of Object.entries(filePaths)) {
+                try {
+                    sizes[label] = statSync(fp).size;
+                } catch {
+                    sizes[label] = 0;
+                }
+            }
+            out["fileBytes"] = sizes;
+        }
+
+        return out;
+    }
+
     public async close(): Promise<void> {
+        this.userDeviceListCache.clear();
         await this.db.destroy();
     }
 
@@ -184,6 +264,7 @@ export class Database extends EventEmitter {
         };
 
         await this.db.insertInto("devices").values(device).execute();
+        this.userDeviceListCache.delete(owner);
 
         const medPreKeys = {
             deviceID: device.deviceID,
@@ -230,30 +311,31 @@ export class Database extends EventEmitter {
         resourceID: string,
         powerLevel: number,
     ): Promise<Permission> {
-        const permissionID = crypto.randomUUID();
+        // Atomic check-then-insert inside a transaction so two concurrent
+        // callers cannot both find "no existing" and insert duplicates.
+        return this.db.transaction().execute(async (trx) => {
+            const checkPermission = await trx
+                .selectFrom("permissions")
+                .selectAll()
+                .where("userID", "=", userID)
+                .where("resourceID", "=", resourceID)
+                .execute();
+            const existing = checkPermission[0];
+            if (existing) {
+                return existing;
+            }
 
-        // check if it already exists
-        const checkPermission = await this.db
-            .selectFrom("permissions")
-            .selectAll()
-            .where("userID", "=", userID)
-            .where("resourceID", "=", resourceID)
-            .execute();
-        const existing = checkPermission[0];
-        if (existing) {
-            return existing;
-        }
+            const permission: Permission = {
+                permissionID: crypto.randomUUID(),
+                powerLevel,
+                resourceID,
+                resourceType,
+                userID,
+            };
 
-        const permission: Permission = {
-            permissionID,
-            powerLevel,
-            resourceID,
-            resourceType,
-            userID,
-        };
-
-        await this.db.insertInto("permissions").values(permission).execute();
-        return permission;
+            await trx.insertInto("permissions").values(permission).execute();
+            return permission;
+        });
     }
 
     public async createServer(name: string, ownerID: string): Promise<Server> {
@@ -321,6 +403,12 @@ export class Database extends EventEmitter {
     }
 
     public async deleteDevice(deviceID: string): Promise<void> {
+        const ownerRow = await this.db
+            .selectFrom("devices")
+            .select("owner")
+            .where("deviceID", "=", deviceID)
+            .executeTakeFirst();
+
         await this.db
             .deleteFrom("preKeys")
             .where("deviceID", "=", deviceID)
@@ -336,6 +424,10 @@ export class Database extends EventEmitter {
             .set({ deleted: 1 })
             .where("deviceID", "=", deviceID)
             .execute();
+
+        if (ownerRow?.owner) {
+            this.userDeviceListCache.delete(ownerRow.owner);
+        }
     }
 
     public async deleteEmoji(emojiID: string): Promise<void> {
@@ -405,31 +497,34 @@ export class Database extends EventEmitter {
     }
 
     public async getOTK(deviceID: string): Promise<null | PreKeysWS> {
-        const rows: PreKeysSQL[] = await this.db
-            .selectFrom("oneTimeKeys")
-            .selectAll()
-            .where("deviceID", "=", deviceID)
-            .orderBy("index")
-            .limit(1)
-            .execute();
-        const otkInfo = rows[0];
-        if (!otkInfo) {
-            return null;
-        }
-        const otk: PreKeysWS = {
-            deviceID: otkInfo.deviceID,
-            index: otkInfo.index,
-            publicKey: XUtils.decodeHex(otkInfo.publicKey),
-            signature: XUtils.decodeHex(otkInfo.signature),
-        };
+        // Atomic select-then-delete inside a transaction so two concurrent
+        // callers cannot dispense the same one-time key.
+        return this.db.transaction().execute(async (trx) => {
+            const rows: PreKeysSQL[] = await trx
+                .selectFrom("oneTimeKeys")
+                .selectAll()
+                .where("deviceID", "=", deviceID)
+                .orderBy("index")
+                .limit(1)
+                .execute();
+            const otkInfo = rows[0];
+            if (!otkInfo) {
+                return null;
+            }
 
-        // delete the otk
-        await this.db
-            .deleteFrom("oneTimeKeys")
-            .where("deviceID", "=", deviceID)
-            .where("index", "=", otk.index)
-            .execute();
-        return otk;
+            await trx
+                .deleteFrom("oneTimeKeys")
+                .where("deviceID", "=", deviceID)
+                .where("index", "=", otkInfo.index)
+                .execute();
+
+            return {
+                deviceID: otkInfo.deviceID,
+                index: otkInfo.index,
+                publicKey: XUtils.decodeHex(otkInfo.publicKey),
+                signature: XUtils.decodeHex(otkInfo.signature),
+            };
+        });
     }
 
     public async getOTKCount(deviceID: string): Promise<number> {
@@ -752,17 +847,25 @@ export class Database extends EventEmitter {
             .where("serverID", "=", serverID)
             .execute();
 
-        return rows.filter((invite: Invite) => {
-            const valid =
-                new Date(Date.now()).getTime() <
-                new Date(invite.expiration).getTime();
-
-            if (!valid) {
-                void this.deleteInvite(invite.inviteID);
+        const nowMs = Date.now();
+        const expiredIds: string[] = [];
+        const valid: Invite[] = [];
+        for (const row of rows) {
+            const expMs = new Date(row.expiration).getTime();
+            if (!Number.isFinite(expMs) || expMs <= nowMs) {
+                expiredIds.push(row.inviteID);
+                continue;
             }
-
-            return valid;
-        });
+            valid.push(row);
+        }
+        if (expiredIds.length > 0) {
+            await this.db
+                .deleteFrom("invites")
+                .where("serverID", "=", serverID)
+                .where("inviteID", "in", expiredIds)
+                .execute();
+        }
+        return valid;
     }
 
     public async retrieveServers(userID: string): Promise<Server[]> {
@@ -803,13 +906,36 @@ export class Database extends EventEmitter {
     }
 
     public async retrieveUserDeviceList(userIDs: string[]): Promise<Device[]> {
+        const now = Date.now();
+        if (userIDs.length === 1) {
+            const owner = userIDs[0];
+            if (typeof owner === "string") {
+                const hit = this.userDeviceListCache.get(owner);
+                if (hit && hit.until > now) {
+                    return hit.devices.map((d) => ({ ...d }));
+                }
+            }
+        }
+
         const rows = await this.db
             .selectFrom("devices")
             .selectAll()
             .where("owner", "in", userIDs)
             .where("deleted", "=", 0)
             .execute();
-        return rows.map(toDevice);
+        const devices = rows.map(toDevice);
+
+        if (userIDs.length === 1) {
+            const owner = userIDs[0];
+            if (typeof owner === "string") {
+                this.userDeviceListCache.set(owner, {
+                    devices: devices.map((d) => ({ ...d })),
+                    until: now + Database.USER_DEVICE_LIST_CACHE_TTL_MS,
+                });
+            }
+        }
+
+        return devices;
     }
 
     public async retrieveUsers(): Promise<InternalUserRecord[]> {

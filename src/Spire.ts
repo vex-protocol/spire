@@ -4,6 +4,7 @@ import type { Server } from "http";
 import { EventEmitter } from "events";
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
+import { freemem, loadavg, totalmem } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,7 +32,7 @@ import { z } from "zod/v4";
 import { ClientManager } from "./ClientManager.ts";
 import { Database, hashPasswordArgon2, verifyPassword } from "./Database.ts";
 import { initApp, protect } from "./server/index.ts";
-import { authLimiter } from "./server/rateLimit.ts";
+import { authLimiter, devApiKeySkipsRateLimits } from "./server/rateLimit.ts";
 import { censorUser, getParam, getUser } from "./server/utils.ts";
 import { getJwtSecret } from "./utils/jwtSecret.ts";
 import { msgpack } from "./utils/msgpack.ts";
@@ -190,13 +191,22 @@ export class Spire extends EventEmitter {
 
     private async bootstrapRequestCounter(): Promise<void> {
         const persistedTotal = await this.db.getRequestsTotal();
+
+        // Between the await above and this synchronous block, requests may
+        // have incremented both `requestsTotal` and `queuedRequestIncrements`.
+        // Capture the queue, mark loaded, then merge — never overwrite
+        // `requestsTotal` (which already includes in-flight increments).
         const startupIncrements = this.queuedRequestIncrements;
         this.queuedRequestIncrements = 0;
-        this.requestsTotal = persistedTotal + startupIncrements;
+        this.requestsTotalLoaded = true;
+
+        // Add the persisted baseline on top of whatever the middleware
+        // already counted in-memory, instead of overwriting it.
+        this.requestsTotal += persistedTotal;
+
         if (startupIncrements > 0) {
             await this.db.incrementRequestsTotal(startupIncrements);
         }
-        this.requestsTotalLoaded = true;
     }
 
     private createActionToken(scope: TokenScopes): ActionToken {
@@ -210,8 +220,9 @@ export class Spire extends EventEmitter {
     }
 
     private deleteActionToken(key: ActionToken) {
-        if (this.actionTokens.includes(key)) {
-            this.actionTokens.splice(this.actionTokens.indexOf(key), 1);
+        const idx = this.actionTokens.indexOf(key);
+        if (idx !== -1) {
+            this.actionTokens.splice(idx, 1);
         }
     }
 
@@ -286,11 +297,9 @@ export class Spire extends EventEmitter {
                     );
 
                     client.on("fail", () => {
-                        if (this.clients.includes(client)) {
-                            this.clients.splice(
-                                this.clients.indexOf(client),
-                                1,
-                            );
+                        const idx = this.clients.indexOf(client);
+                        if (idx !== -1) {
+                            this.clients.splice(idx, 1);
                         }
                     });
 
@@ -446,6 +455,68 @@ export class Spire extends EventEmitter {
                 withinLatencyBudget:
                     checkDurationMs <= STATUS_LATENCY_BUDGET_MS,
             });
+        });
+
+        /**
+         * Dev-only process snapshot (same gate as rate-limit bypass: `DEV_API_KEY`
+         * env + `x-dev-api-key` header). Returns 404 when not enabled or key wrong
+         * so the route is not advertised to anonymous callers.
+         * Lets local stress / `sample <pid>` workflows see RSS, WS count, etc.
+         */
+        this.api.get("/status/process", (req, res) => {
+            if (!devApiKeySkipsRateLimits(req)) {
+                res.sendStatus(404);
+                return;
+            }
+            const mu = process.memoryUsage();
+            const ru = process.resourceUsage();
+            res.json({
+                activeRequestsApprox: this.requestsTotal,
+                dbReady: this.dbReady,
+                hostOs: {
+                    freemem: freemem(),
+                    loadavg: loadavg(),
+                    totalmem: totalmem(),
+                },
+                memory: {
+                    arrayBuffers: mu.arrayBuffers,
+                    external: mu.external,
+                    heapTotal: mu.heapTotal,
+                    heapUsed: mu.heapUsed,
+                    rss: mu.rss,
+                },
+                pid: process.pid,
+                resourceUsage: {
+                    fsRead: ru.fsRead,
+                    fsWrite: ru.fsWrite,
+                    maxRSS: ru.maxRSS,
+                    systemMicros: ru.systemCPUTime,
+                    userMicros: ru.userCPUTime,
+                },
+                uptimeSeconds: Math.floor(process.uptime()),
+                websocketClients: this.wss.clients.size,
+            });
+        });
+
+        /**
+         * Dev-only SQLite file + pragma snapshot (same gate as `/status/process`).
+         */
+        this.api.get("/status/sqlite", (req, res) => {
+            if (!devApiKeySkipsRateLimits(req)) {
+                res.sendStatus(404);
+                return;
+            }
+            if (!this.dbReady) {
+                res.status(503).json({ dbReady: false, ok: false });
+                return;
+            }
+            try {
+                const sqlite = this.db.getDevSqliteMonitor();
+                res.json({ ok: true, sqlite });
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                res.status(500).json({ error: msg, ok: false });
+            }
         });
 
         this.api.post("/goodbye", protect, (req, res) => {
@@ -763,7 +834,10 @@ export class Spire extends EventEmitter {
         data?: unknown,
         deviceID?: string,
     ): void {
-        for (const client of this.clients) {
+        // Snapshot the array so that a synchronous `fail` → splice inside
+        // client.send() doesn't corrupt the iteration.
+        const snapshot = this.clients.slice();
+        for (const client of snapshot) {
             if (deviceID) {
                 if (client.getDevice().deviceID === deviceID) {
                     const msg: NotifyMsg = {
