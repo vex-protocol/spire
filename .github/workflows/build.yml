@@ -39,7 +39,7 @@ jobs:
                   node-version-file: .tool-versions
                   cache: npm
 
-            - run: npm ci
+            - run: npm ci --prefer-offline
 
             - name: TypeScript build
               run: npm run build
@@ -67,7 +67,7 @@ jobs:
 
             - name: Socket security scan
               if: github.event.pull_request.head.repo.full_name == github.repository
-              run: npx @socketsecurity/cli@latest ci
+              run: npx @socketsecurity/cli ci
               env:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
 
@@ -89,7 +89,7 @@ jobs:
                   node-version-file: .tool-versions
                   cache: npm
 
-            - run: npm ci
+            - run: npm ci --prefer-offline
 
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
