@@ -1,4 +1,10 @@
 /**
+ * Copyright (c) 2024 Vex Heavy Industries LLC
+ * Licensed under AGPL-3.0. See LICENSE for details.
+ * Commercial licenses available at vex.wtf
+ */
+
+/**
  * Headless stress matrix (CI-style): run spire-stress for each (clients × concurrency) combo.
  * Each child exits after **N flood walls** (default 10), not a time budget — use `--seconds` only if you also want a wall-time cap.
  *

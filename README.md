@@ -100,6 +100,8 @@ npx type-coverage     # type-coverage (≥95%)
 
 See [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish → deploy-hook) and the rules for writing changesets.
 
+Contributions from outside contributors should follow [CONTRIBUTING.md](./CONTRIBUTING.md) (including the [CLA](./CLA.md)).
+
 ## License
 
-[AGPL-3.0-or-later](./LICENSE)
+Open source default: **[AGPL-3.0](./LICENSE)** (full text; see `package.json` for SPDX). Commercial licenses from **Vex Heavy Industries LLC**: [**LICENSE-COMMERCIAL**](./LICENSE-COMMERCIAL), [**LICENSING.md**](./LICENSING.md), [vex.wtf](https://vex.wtf).
