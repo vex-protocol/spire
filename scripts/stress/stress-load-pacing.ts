@@ -1,6 +1,6 @@
 /**
  * Idle policy between completed flood walls. Each wall is still one synchronized
- * `Promise.all` over all client slots — this only controls whether the harness sleeps
+ * all slots completing each wall — this only controls whether the harness sleeps
  * before starting the next wall.
  *
  * Canonical: `immediate` | `paced`. Legacy env values `continuous` and `burst` are

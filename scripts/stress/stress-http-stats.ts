@@ -75,36 +75,16 @@ export async function settleOne<T>(
     }
 }
 
-/** Run promises in parallel; count every outcome; throw the first rejection if any failed. */
+/**
+ * Wait for every promise (no fail-fast). Outcomes are already counted by
+ * {@link settleOne} / {@link settleWithTelemetry} inside each task.
+ */
 export async function allTracked(
-    stats: HttpExpectStats,
+    _stats: HttpExpectStats,
     promises: readonly Promise<unknown>[],
 ): Promise<void> {
-    const results = await Promise.allSettled(promises);
-    for (const r of results) {
-        if (r.status === "fulfilled") {
-            stats.ok += 1;
-        } else {
-            recordHttpFailure(stats, r.reason);
-        }
-    }
-    let firstReject: unknown;
-    for (const r of results) {
-        if (r.status === "rejected") {
-            firstReject = r.reason;
-            break;
-        }
-    }
-    if (firstReject !== undefined) {
-        if (firstReject instanceof Error) {
-            throw firstReject;
-        }
-        const msg =
-            typeof firstReject === "string"
-                ? firstReject
-                : "One or more tracked requests failed.";
-        throw new Error(msg);
-    }
+    void _stats;
+    await Promise.allSettled(promises);
 }
 
 export function formatHttpExpectLine(

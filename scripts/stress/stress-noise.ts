@@ -481,7 +481,7 @@ async function runOneNoiseOp(
         return;
     }
 
-    let id: string;
+    let id = "pick";
     let outcome: NoiseOpOutcome = { ok: true };
     let peerUser: string | undefined;
     let peerName: string | undefined;
@@ -746,6 +746,20 @@ async function runOneNoiseOp(
             event: "noise_op",
             phase: crashCtx.phase,
         });
+    } catch (err: unknown) {
+        recordHttpFailure(stats, err);
+        row.lastOk = false;
+        trace?.append({
+            burst: crashCtx.currentBurst,
+            clientIndex,
+            detail: {
+                ...detailBase(),
+                err: err instanceof Error ? err.message : String(err),
+                stage: "threw",
+            },
+            event: "noise_op",
+            phase: crashCtx.phase,
+        });
     } finally {
         row.inFlight = "";
     }
@@ -788,5 +802,5 @@ export async function runNoiseBurst(
             );
         }
     }
-    await Promise.all(tasks);
+    await Promise.allSettled(tasks);
 }
