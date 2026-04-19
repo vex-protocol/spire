@@ -3,6 +3,7 @@ name: Build
 on:
     pull_request:
         branches: [master]
+    workflow_dispatch:
 
 concurrency:
     group: build-${{ github.event.pull_request.number || github.ref }}
@@ -14,70 +15,101 @@ permissions:
 env:
     npm_config_save_exact: "true"
     npm_config_engine_strict: "true"
+    SPIRE_CONTAINER_NAME: spire-stress-ci
+    SPIRE_IMAGE_TAG: spire:stress-ci
 
 jobs:
-    # ── Parallel checks ────────────────────────────────────────────────────
+    # ── Single Linux runner: tsc + vitest + Docker image + stress:cli ───────
     #
-    # `build` and `test` keep the ubuntu/macos/windows matrix because
-    # spire's runtime has caught real Windows-only issues in the past
-    # (native modules like better-sqlite3, path separator differences,
-    # case-sensitive filesystem mismatches). The lint/format/types/
-    # supply-chain jobs run on ubuntu only — they're deterministic
-    # across OSes.
+    # GitHub-hosted macOS (ARM) cannot run Docker-in-VM reliably; Ubuntu has
+    # native Docker. Lint/types/supply-chain stay separate lightweight jobs.
 
-    build:
-        name: Build (${{ matrix.os }})
-        runs-on: ${{ matrix.os }}
-        strategy:
-            fail-fast: false
-            matrix:
-                os:
-                    - ubuntu-latest
-                    - macos-latest
-                    - windows-latest
+    build-test-stress:
+        name: Build, test, stress
+        runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
-              if: runner.os == 'Linux'
               uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
               with:
                   egress-policy: audit
+
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   persist-credentials: false
+
             - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
               with:
                   node-version-file: .tool-versions
                   cache: npm
-            - run: npm ci --ignore-scripts
-            - name: tsc
+
+            - run: npm ci
+
+            - name: TypeScript build
               run: npm run build
 
-    test:
-        name: Test (${{ matrix.os }})
-        runs-on: ${{ matrix.os }}
-        strategy:
-            fail-fast: false
-            matrix:
-                os:
-                    - ubuntu-latest
-                    - macos-latest
-                    - windows-latest
-        steps:
-            - name: Harden Runner
-              if: runner.os == 'Linux'
-              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-              with:
-                  egress-policy: audit
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-              with:
-                  node-version-file: .tool-versions
-                  cache: npm
-            - run: npm ci
             - name: Vitest
               run: npm test
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+            - name: Build Spire image (layer cache)
+              uses: docker/build-push-action@1dc73863535b631f98b2378be8619f83b136f4a0 # v6.17.0
+              with:
+                  context: .
+                  push: false
+                  load: true
+                  tags: ${{ env.SPIRE_IMAGE_TAG }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Generate keys and DEV_API_KEY
+              run: |
+                  set -euo pipefail
+                  eval "$(node scripts/gen-spk.js)"
+                  echo "SPK=${SPK}" >> "${GITHUB_ENV}"
+                  echo "JWT_SECRET=${JWT_SECRET}" >> "${GITHUB_ENV}"
+                  echo "DEV_API_KEY=$(openssl rand -hex 16)" >> "${GITHUB_ENV}"
+
+            - name: Start Spire (Docker)
+              run: |
+                  set -euo pipefail
+                  docker run -d --name "${{ env.SPIRE_CONTAINER_NAME }}" \
+                    -p 127.0.0.1:16777:16777 \
+                    -e NODE_ENV=production \
+                    -e DB_TYPE=sqlite3 \
+                    -e "SPK=${SPK}" \
+                    -e "JWT_SECRET=${JWT_SECRET}" \
+                    -e "DEV_API_KEY=${DEV_API_KEY}" \
+                    "${{ env.SPIRE_IMAGE_TAG }}"
+
+            - name: Wait for /status
+              run: |
+                  set -euo pipefail
+                  for _ in $(seq 1 90); do
+                    if curl -sf --connect-timeout 2 "http://127.0.0.1:16777/status" >/dev/null; then
+                      echo "Spire is up."
+                      exit 0
+                    fi
+                    sleep 1
+                  done
+                  echo "Timed out waiting for Spire /status"
+                  exit 1
+
+            # Matches `stress-cli-sweep` defaults: 10 clients, 10 walls/combo, conc 10, scenario noise.
+            - name: stress:cli (default matrix)
+              run: >-
+                  npm run stress:cli --
+                  --host 127.0.0.1:16777
+                  --stop-on-fail
+
+            - name: Spire logs on failure
+              if: failure()
+              run: docker logs "${{ env.SPIRE_CONTAINER_NAME }}" 2>&1 | tail -n 200 || true
+
+            - name: Tear down Spire container
+              if: always()
+              run: docker rm -f "${{ env.SPIRE_CONTAINER_NAME }}" 2>/dev/null || true
 
     lint:
         name: Lint
@@ -121,32 +153,6 @@ jobs:
             - name: Type coverage
               run: npx type-coverage
 
-    docker:
-        name: Docker
-        runs-on: ubuntu-latest
-        steps:
-            - name: Harden Runner
-              uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
-              with:
-                  egress-policy: audit
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-              with:
-                  persist-credentials: false
-            - name: Create .env
-              run: |
-                  printf 'SPK=%s\nJWT_SECRET=%s\nDB_TYPE=sqlite3mem\n' \
-                    "$(openssl rand -hex 64)" "$(openssl rand -hex 32)" > .env
-            - name: Build and start
-              run: docker compose up -d --build --wait --wait-timeout 60
-            - name: Smoke test
-              run: curl -sf http://localhost:8080/status
-            - name: Logs on failure
-              if: failure()
-              run: docker compose logs
-            - name: Teardown
-              if: always()
-              run: docker compose down -v
-
     supply-chain:
         name: Supply Chain
         runs-on: ubuntu-latest
@@ -179,11 +185,9 @@ jobs:
         name: CI OK
         if: always()
         needs:
-            - build
-            - test
+            - build-test-stress
             - lint
             - types
-            - docker
             - supply-chain
         runs-on: ubuntu-latest
         steps:
