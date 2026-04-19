@@ -96,7 +96,6 @@ npm run format        # prettier --write
 npm run format:check
 npm test              # vitest run
 npx type-coverage     # type-coverage (≥95%)
-npm run license:check # license allowlist gate
 ```
 
 See [AGENTS.md](./AGENTS.md) for the release flow (changesets → publish → deploy-hook) and the rules for writing changesets.

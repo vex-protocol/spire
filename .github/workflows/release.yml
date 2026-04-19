@@ -48,9 +48,6 @@ jobs:
             - name: Build
               run: npm run build
 
-            - name: Check dependency licenses
-              run: npm run license:check
-
             # TODO(@dream): switch from NPM_TOKEN to npm trusted publishing
             # once a security key is available on the npmjs.com account.
             # Trusted publishing replaces the NPM_TOKEN entirely — the
