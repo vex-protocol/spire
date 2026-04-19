@@ -5,7 +5,7 @@
  */
 
 import type { ActionToken, BaseMsg, NotifyMsg, User } from "@vex-chat/types";
-import type { Server } from "http";
+import type { IncomingMessage, Server } from "http";
 
 import { EventEmitter } from "events";
 import { execSync } from "node:child_process";
@@ -31,6 +31,7 @@ import {
 } from "@vex-chat/types";
 
 import jwt from "jsonwebtoken";
+import morgan from "morgan";
 import { stringify as uuidStringify } from "uuid";
 import { WebSocketServer } from "ws";
 import { z } from "zod/v4";
@@ -130,6 +131,14 @@ const getCommitSha = (): string => {
         return "unknown";
     }
 };
+
+/** Hyphenated UUIDs in paths/query — replaced so request logs are less identifying. */
+function redactUuidsForLog(url: string): string {
+    return url.replace(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+        "[uuid]",
+    );
+}
 
 export interface SpireOptions {
     apiPort?: number;
@@ -232,6 +241,14 @@ export class Spire extends EventEmitter {
     }
 
     private init(apiPort: number): void {
+        // Request traces (UUIDs redacted in `url` token). Enabled in all envs,
+        // including production / Docker — dependency is non-dev.
+        morgan.token("url", (req: IncomingMessage) => {
+            const r = req as IncomingMessage & { originalUrl?: string };
+            return redactUuidsForLog(r.originalUrl ?? r.url ?? "");
+        });
+        this.api.use(morgan("dev"));
+
         this.api.use((_req, _res, next) => {
             this.requestsTotal += 1;
 
