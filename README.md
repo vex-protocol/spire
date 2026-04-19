@@ -15,6 +15,7 @@ Reference server implementation for the [Vex](https://vex.wtf) protocol.
 
 - **REST API** (Express 5) for full e2e messaging including auth, registration, users, servers, channels, invites, and file upload.
 
+
 ## Install
 
 Or clone the repo:
