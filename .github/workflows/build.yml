@@ -22,7 +22,7 @@ jobs:
     # Parallel runners: fast feedback from checks while Docker + stress run separately.
 
     checks:
-        name: CI
+        name: build/test
         runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
@@ -72,7 +72,7 @@ jobs:
                   SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_API_KEY }}
 
     stress:
-        name: CI stress
+        name: stress
         runs-on: ubuntu-latest
         steps:
             - name: Harden Runner
