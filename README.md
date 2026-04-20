@@ -35,7 +35,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Compose builds the image from this repo’s `Dockerfile`, starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and publishes **port 8080** on the host (same default as `npm start`). Use **http://localhost:8080** for HTTP and WebSocket. Point your **host** reverse proxy at `http://127.0.0.1:8080` once; you do not need different ports for Docker vs bare Node.
+Compose builds the image from this repo’s `Dockerfile`, starts Spire with a persistent **`spire-data`** volume mounted at `/data` (SQLite + `files/`, `avatars/`, `emoji/`), and publishes **port 16777** on the host (same default as `npm start`). Use **http://localhost:16777** for HTTP and WebSocket.
 
 ## Running without Docker
 
