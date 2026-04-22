@@ -9,7 +9,7 @@ import type { SpireOptions } from "./Spire.ts";
 import { Spire } from "./Spire.ts";
 import { loadEnv } from "./utils/loadEnv.ts";
 
-function main() {
+async function main() {
     // load the environment variables — loadEnv() exits if required vars are missing
     loadEnv();
 
@@ -20,11 +20,21 @@ function main() {
 
     const apiPort = process.env["API_PORT"];
     const dbType = parseDbType(process.env["DB_TYPE"]);
+    const fips =
+        process.env["SPIRE_FIPS"] === "1" ||
+        process.env["SPIRE_FIPS"] === "true";
 
-    new Spire(spk, {
+    const options: SpireOptions = {
         ...(apiPort !== undefined ? { apiPort: Number(apiPort) } : {}),
         ...(dbType !== undefined ? { dbType } : {}),
-    });
+        ...(fips ? { cryptoProfile: "fips" } : {}),
+    };
+
+    if (fips) {
+        await Spire.createAsync(spk, options);
+    } else {
+        new Spire(spk, options);
+    }
 }
 
 function parseDbType(value: string | undefined): SpireOptions["dbType"] {
@@ -39,4 +49,7 @@ function parseDbType(value: string | undefined): SpireOptions["dbType"] {
     }
 }
 
-main();
+void main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+});

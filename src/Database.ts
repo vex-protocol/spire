@@ -32,7 +32,11 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { XUtils } from "@vex-chat/crypto";
+import {
+    fipsEcdhRawPublicKeyFromEcdsaSpkiAsync,
+    getCryptoProfile,
+    XUtils,
+} from "@vex-chat/crypto";
 import { MailType } from "@vex-chat/types";
 
 import argon2 from "argon2";
@@ -512,10 +516,15 @@ export class Database extends EventEmitter {
         if (!preKey) {
             throw new Error("Failed to get prekey.");
         }
+        const signKeyBytes = XUtils.decodeHex(device.signKey);
+        const signKey =
+            getCryptoProfile() === "fips"
+                ? await fipsEcdhRawPublicKeyFromEcdsaSpkiAsync(signKeyBytes)
+                : signKeyBytes;
         const keyBundle: KeyBundle = {
             otk,
             preKey,
-            signKey: XUtils.decodeHex(device.signKey),
+            signKey,
         };
         return keyBundle;
     }
