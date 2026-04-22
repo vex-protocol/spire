@@ -2,6 +2,7 @@ node_modules
 dist
 **/*.log
 .env
+.env.*
 *.tgz
 .DS_Store
 
