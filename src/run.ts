@@ -18,14 +18,23 @@ async function main() {
         throw new Error("SPK must be set (loadEnv should have caught this).");
     }
 
-    const apiPort = process.env["API_PORT"];
+    const rawPort = process.env["API_PORT"]?.trim() ?? "";
+    const apiPort =
+        rawPort.length > 0 ? Number.parseInt(rawPort, 10) : undefined;
+    if (apiPort !== undefined) {
+        if (!Number.isFinite(apiPort) || apiPort < 1 || apiPort > 65_535) {
+            throw new Error(
+                `API_PORT must be 1-65535; got ${JSON.stringify(process.env["API_PORT"])}.`,
+            );
+        }
+    }
     const dbType = parseDbType(process.env["DB_TYPE"]);
     const fips =
         process.env["SPIRE_FIPS"] === "1" ||
         process.env["SPIRE_FIPS"] === "true";
 
     const options: SpireOptions = {
-        ...(apiPort !== undefined ? { apiPort: Number(apiPort) } : {}),
+        ...(apiPort !== undefined ? { apiPort } : {}),
         ...(dbType !== undefined ? { dbType } : {}),
         ...(fips ? { cryptoProfile: "fips" } : {}),
     };
