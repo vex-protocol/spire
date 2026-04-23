@@ -84,6 +84,7 @@ import {
     type StressCrashContext,
 } from "./stress-crash-dump.ts";
 import { StressDashboard } from "./stress-dashboard.ts";
+import { formatStressUncaughtError } from "./stress-error-format.ts";
 import {
     createHttpExpectStats,
     httpFailureTotal,
@@ -1424,7 +1425,9 @@ void main()
         exitStressHarness();
     })
     .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(msg + "\n");
+        process.stderr.write(`${formatStressUncaughtError(err)}\n`);
+        process.stderr.write(
+            "Hint: match `requestId` in Spire logs (e.g. docker logs). For per-wall details set SPIRE_STRESS_VERBOSE=1, or use stress:web.\n",
+        );
         process.exit(1);
     });
