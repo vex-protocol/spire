@@ -61,7 +61,7 @@
         "@types/multer": "2.1.0",
         "@types/node": "25.6.0",
         "@types/ws": "8.18.1",
-        "@vex-chat/libvex": "5.3.0",
+        "@vex-chat/libvex": "5.3.1",
         "@vitest/eslint-plugin": "1.6.15",
         "axios": "1.15.0",
         "eslint": "10.2.0",
