@@ -71,7 +71,8 @@ describe("Database", () => {
         it("takes a userId and one time key, adds a keyId and saves it to oneTimeKey table", async () => {
             expect.assertions(1);
 
-            vi.mocked(uuid.v4).mockReturnValueOnce(keyID);
+            // uuid@14 overloads: mock the string return path (v4 with no `buf` argument).
+            vi.mocked(uuid.v4 as () => string).mockReturnValueOnce(keyID);
 
             const provider = new Database(options);
             await new Promise<void>((resolve, reject) => {
